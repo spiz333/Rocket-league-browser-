@@ -24,7 +24,10 @@ export class Input {
     this.stickRadius = 58;
     this.mouseBoost = false;
     this.listeners = {};
-    this.settings = { autoGas: true, invertPitch: false, vibrate: true };
+    this.settings = { autoGas: true, invertPitch: false, vibrate: true, steerCurve: 1.3 };
+    this.flipQueue = null;
+    this.lastOnGround = true;
+    this.lastJumpOut = false;
     this.touchActive = false;
     this.prevPad = {};
     this.enabled = true;
@@ -82,7 +85,9 @@ export class Input {
       this.stickBase.classList.add('active');
       this.stickKnob.style.transform = 'translate(0px, 0px)';
     } else if (e.clientX >= w * 0.45) {
-      this.rightTouches.set(e.pointerId, { x: e.clientX, y: e.clientY, fresh: true });
+      const t = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, lock: null, down: performance.now(), swiped: false };
+      if (this._hit('jump', e.clientX, e.clientY)) t.lock = 'jump';
+      this.rightTouches.set(e.pointerId, t);
       this._updateButtons();
     }
     this.emit('any');
@@ -111,6 +116,15 @@ export class Input {
     } else if (this.rightTouches.has(e.pointerId)) {
       const t = this.rightTouches.get(e.pointerId);
       t.x = e.clientX; t.y = e.clientY;
+      // swipe on the jump button = jump + flip in that direction
+      if (t.lock === 'jump' && !t.swiped) {
+        const dx = t.x - t.sx, dy = t.y - t.sy;
+        const len = Math.hypot(dx, dy);
+        if (len > 22) {
+          t.swiped = true;
+          this._queueFlip(-dy / len, dx / len);
+        }
+      }
       this._updateButtons();
     }
   }
@@ -142,14 +156,31 @@ export class Input {
     this.stickKnob.style.transform = 'translate(0px, 0px)';
   }
 
+  _hit(name, x, y) {
+    const r = this.buttons[name].getBoundingClientRect();
+    if (r.width === 0) return false;
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    return Math.hypot(x - cx, y - cy) < r.width / 2 * 1.18;
+  }
+
+  _hitCached(t) { return this._hit('jump', t.x, t.y); }
+
+  _queueFlip(f, s) {
+    // snap to 8 directions so flips are predictable
+    const a = Math.round(Math.atan2(s, f) / (Math.PI / 4)) * (Math.PI / 4);
+    f = Math.cos(a); s = Math.sin(a);
+    const T = 1, F = 0, D = 2;
+    const seq = this.lastOnGround && !this.lastJumpOut ? [T, T, T, F, F, D, D, D, D, D] : [F, F, D, D, D, D, D];
+    this.flipQueue = { f, s, seq, i: 0 };
+    if (this.settings.vibrate && navigator.vibrate) navigator.vibrate(12);
+  }
+
   _updateButtons() {
     const next = { jump: false, boost: false, drift: false };
-    for (const [name, el] of Object.entries(this.buttons)) {
-      const r = el.getBoundingClientRect();
-      if (r.width === 0) continue;
-      const cx = r.left + r.width / 2, cy = r.top + r.height / 2, rad = r.width / 2 * 1.18;
+    for (const name of Object.keys(this.buttons)) {
       for (const t of this.rightTouches.values()) {
-        if (Math.hypot(t.x - cx, t.y - cy) < rad) next[name] = true;
+        if (t.lock === 'jump') { if (name === 'jump') next.jump = true; continue; }
+        if (this._hit(name, t.x, t.y)) next[name] = true;
       }
     }
     if (next.jump && !this.pressed.jump && this.settings.vibrate && navigator.vibrate) navigator.vibrate(8);
@@ -160,6 +191,7 @@ export class Input {
   }
 
   reset() {
+    this.flipQueue = null;
     this.rightTouches.clear();
     this._updateButtons();
     this._resetStick();
@@ -170,7 +202,15 @@ export class Input {
   read(c, onGround) {
     const k = this.keys;
     let steer = 0, up = 0, roll = 0;
-    let jump = this.pressed.jump || k.has('Space') || k.has('KeyJ');
+    // a fresh tap on SPRING in the air waits a moment to see whether it becomes a swipe-flip
+    let touchJump = false;
+    const now = performance.now();
+    for (const t of this.rightTouches.values()) {
+      if (t.lock === 'jump') {
+        if (t.swiped || this.lastOnGround || this.lastJumpOut || now - t.down > 100) touchJump = true;
+      } else if (this._hitCached(t)) touchJump = true;
+    }
+    let jump = touchJump || k.has('Space') || k.has('KeyJ');
     let boost = this.pressed.boost || k.has('ShiftLeft') || k.has('ShiftRight') || k.has('KeyK') || this.mouseBoost;
     let drift = this.pressed.drift || k.has('ControlLeft') || k.has('KeyL') || k.has('MouseRight');
     let throttle = 0;
@@ -183,9 +223,10 @@ export class Input {
     if (k.has('KeyE')) roll += 1;
     throttle = up;
 
-    // touch stick
+    // touch stick (with a response curve for finer steering)
     if (this.stick.id !== null || this.touchActive) {
-      const sx = dz(this.stick.x), sy = dz(-this.stick.y);
+      const curve = (v) => Math.sign(v) * Math.pow(Math.abs(v), this.settings.steerCurve);
+      const sx = curve(dz(this.stick.x)), sy = dz(-this.stick.y);
       if (this.stick.id !== null) {
         steer = Math.abs(sx) > Math.abs(steer) ? sx : steer;
         up = Math.abs(sy) > Math.abs(up) ? sy : up;
@@ -219,13 +260,25 @@ export class Input {
       this.prevPad = { 0: b(0), 3: b(3), 9: b(9) };
     }
 
-    if (!this.enabled) { steer = up = throttle = roll = 0; jump = boost = drift = false; }
+    let fwd = up;
+    if (this.flipQueue) {
+      const q = this.flipQueue;
+      const ph = q.seq[q.i++];
+      if (ph === 0) jump = false;
+      else if (ph === 1) jump = true;
+      else { jump = true; fwd = q.f; steer = q.s; }
+      if (q.i >= q.seq.length) this.flipQueue = null;
+    }
+
+    if (!this.enabled) { steer = up = throttle = roll = fwd = 0; jump = boost = drift = false; this.flipQueue = null; }
 
     const pitch = this.settings.invertPitch ? -up : up;
+    this.lastOnGround = onGround;
+    this.lastJumpOut = jump;
     c.throttle = throttle;
     c.steer = steer;
     c.pitch = pitch;
-    c.fwd = up;
+    c.fwd = fwd;
     c.yaw = steer;
     c.roll = roll;
     c.jump = jump;

@@ -31,7 +31,7 @@
       <span id="boost-num">33</span>
       <span class="lbl">BOOST</span>
     </div>
-    <div id="btn-jump" class="tbtn big"><span class="lbl">SPRING</span></div>
+    <div id="btn-jump" class="tbtn big"><span class="lbl">SPRING</span><span class="swipe-hint">swipe = flip</span></div>
   </div>
 
   <!-- ===== HUD ===== -->
@@ -62,6 +62,7 @@
       </div>
       <nav class="menu">
         <button class="btn primary" data-go="play">▶ SPELEN</button>
+        <button class="btn online" data-go="online">🌐 ONLINE SPELEN</button>
         <button class="btn" data-action="training">VRIJ OEFENEN</button>
         <button class="btn" data-go="garage">GARAGE</button>
         <button class="btn" data-go="settings">INSTELLINGEN</button>
@@ -92,6 +93,61 @@
       </div>
     </section>
 
+    <section id="screen-online" class="screen hidden">
+      <h2>Online spelen</h2>
+      <div class="opt-row"><span class="opt-label">Jouw naam</span>
+        <input id="player-name" class="text-in" maxlength="14" placeholder="Speler" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="online-cards">
+        <div class="online-card">
+          <h3>Kamer maken</h3>
+          <p>Jij bent de host. Deel de code met je vrienden; lege plekken worden bots.</p>
+          <button class="btn primary" data-action="host">KAMER MAKEN</button>
+        </div>
+        <div class="online-card">
+          <h3>Meedoen</h3>
+          <p>Vul de code van je vriend in.</p>
+          <div class="join-row">
+            <input id="join-code" class="text-in code" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false">
+            <button class="btn primary" data-action="join">MEEDOEN</button>
+          </div>
+        </div>
+      </div>
+      <p class="note" id="online-status"></p>
+      <div class="row-buttons">
+        <button class="btn" data-go="main">TERUG</button>
+      </div>
+    </section>
+
+    <section id="screen-lobby" class="screen hidden">
+      <h2>Lobby <span class="room-code" id="room-code">-----</span></h2>
+      <div class="row-buttons lobby-share">
+        <button class="btn" data-action="share">🔗 LINK DELEN</button>
+        <span class="note" id="share-note">Lege plekken worden bots.</span>
+      </div>
+      <div class="teams">
+        <div class="team-col t0"><h3>BLAUW</h3><ul id="lobby-team0"></ul></div>
+        <div class="team-col t1"><h3>ROOD</h3><ul id="lobby-team1"></ul></div>
+      </div>
+      <div id="lobby-host-opts">
+        <div class="opt-row"><span class="opt-label">Modus</span>
+          <div class="seg" data-opt="teamSize"><button data-val="1">1 v 1</button><button data-val="2">2 v 2</button><button data-val="3">3 v 3</button></div>
+        </div>
+        <div class="opt-row"><span class="opt-label">Bots</span>
+          <div class="seg" data-opt="difficulty"><button data-val="easy">Makkelijk</button><button data-val="normal">Normaal</button><button data-val="hard">Moeilijk</button></div>
+        </div>
+        <div class="opt-row"><span class="opt-label">Speeltijd</span>
+          <div class="seg" data-opt="duration"><button data-val="120">2 min</button><button data-val="180">3 min</button><button data-val="300">5 min</button></div>
+        </div>
+      </div>
+      <p class="note" id="lobby-status"></p>
+      <div class="row-buttons">
+        <button class="btn danger" data-action="leave">VERLATEN</button>
+        <button class="btn" data-action="switch-team">WISSEL TEAM</button>
+        <button class="btn primary" data-action="net-start" id="btn-net-start">START ▶</button>
+      </div>
+    </section>
+
     <section id="screen-garage" class="screen hidden garage">
       <h2>Garage</h2>
       <div class="opt-row"><span class="opt-label">Model</span>
@@ -118,11 +174,20 @@
       <div class="opt-row"><span class="opt-label">Neus omhoog/omlaag omkeren</span>
         <div class="seg" data-opt="invertPitch"><button data-val="0">Normaal</button><button data-val="1">Omgekeerd</button></div>
       </div>
+      <div class="opt-row"><span class="opt-label">Stuurgevoeligheid</span>
+        <div class="seg" data-opt="steerCurve"><button data-val="1.7">Rustig</button><button data-val="1.3">Normaal</button><button data-val="1">Direct</button></div>
+      </div>
+      <div class="opt-row"><span class="opt-label">Knoppen</span>
+        <div class="seg" data-opt="btnSize"><button data-val="small">Klein</button><button data-val="normal">Normaal</button><button data-val="large">Groot</button></div>
+      </div>
+      <div class="opt-row"><span class="opt-label">Landingshulp</span>
+        <div class="seg" data-opt="assist"><button data-val="1">Aan</button><button data-val="0">Uit</button></div>
+      </div>
       <div class="opt-row"><span class="opt-label">Trillen</span>
         <div class="seg" data-opt="vibrate"><button data-val="1">Aan</button><button data-val="0">Uit</button></div>
       </div>
       <div class="opt-row"><span class="opt-label">Graphics</span>
-        <div class="seg" data-opt="quality"><button data-val="low">Snel</button><button data-val="high">Mooi</button></div>
+        <div class="seg" data-opt="quality"><button data-val="low">Snel</button><button data-val="medium">Mooi</button><button data-val="high">Ultra</button></div>
       </div>
       <div class="opt-row"><span class="opt-label">Herhalingen na goal</span>
         <div class="seg" data-opt="replays"><button data-val="1">Aan</button><button data-val="0">Uit</button></div>
@@ -144,7 +209,7 @@
           <ul>
             <li><b>Linkerduim</b>: sleep ergens links om te sturen. Omlaag trekken = remmen / achteruit.</li>
             <li><b>SPRING</b>: springen. Nog eens tikken in de lucht = dubbele sprong.</li>
-            <li><b>Flip</b>: spring, duw de stick een kant op en tik nog eens op SPRING.</li>
+            <li><b>Flip</b>: veeg over SPRING in de richting waarin je wilt flippen (omhoog = voorwaarts). Of: spring, duw de stick een kant op en tik nog eens op SPRING.</li>
             <li><b>BOOST</b>: vasthouden voor nitro. Werkt ook in de lucht!</li>
             <li><b>DRIFT</b>: slippen in bochten; in de lucht = rollen met de stick.</li>
             <li>Schuif met je duim tussen BOOST en SPRING om beide tegelijk te doen.</li>
@@ -180,7 +245,7 @@
       <h2>Pauze</h2>
       <nav class="menu">
         <button class="btn primary" data-action="resume">▶ DOORGAAN</button>
-        <button class="btn" data-action="restart">OPNIEUW BEGINNEN</button>
+        <button class="btn" data-action="restart" id="btn-pause-restart">OPNIEUW BEGINNEN</button>
         <button class="btn" data-go="settings">INSTELLINGEN</button>
         <button class="btn" data-go="help">BESTURING</button>
         <button class="btn danger" data-action="quit">STOPPEN</button>
@@ -194,9 +259,10 @@
         <thead><tr><th>Speler</th><th>Punten</th><th>Goals</th><th>Assists</th><th>Reddingen</th><th>Schoten</th></tr></thead>
         <tbody></tbody>
       </table>
+      <p class="note" id="end-note"></p>
       <div class="row-buttons">
-        <button class="btn" data-action="quit">HOOFDMENU</button>
-        <button class="btn primary" data-action="restart">NOG EEN KEER ▶</button>
+        <button class="btn" data-action="quit" id="btn-end-quit">HOOFDMENU</button>
+        <button class="btn primary" data-action="restart" id="btn-end-again">NOG EEN KEER ▶</button>
       </div>
     </section>
   </div>

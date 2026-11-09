@@ -87,9 +87,13 @@ export class Car {
     this.wheelSpin = 0;
     this.steerVis = 0;
     this.unlimitedBoost = false;
+    this.assist = this.assist ?? true;
     this.righting = 0;
     this.rightFrom = this.rightFrom || new THREE.Quaternion();
     this.rightTo = this.rightTo || new THREE.Quaternion();
+    this.dodgeT = 0;
+    this.dodgeFrom = this.dodgeFrom || new THREE.Quaternion();
+    this.dodgeAxis = this.dodgeAxis || new THREE.Vector3(1, 0, 0);
   }
 
   place(x, z, yaw) {
@@ -121,7 +125,8 @@ export class Car {
     // ---- ground detection
     let grounded = false;
     const d = sdf(this.pos.x, this.pos.y, this.pos.z);
-    if (this.groundLock <= 0 && d < CAR.RIDE + 0.22) {
+    const midFlip = this.dodging > 0 && this.dodgeT / CAR.DODGE_TIME < 0.8;
+    if (this.groundLock <= 0 && !midFlip && d < CAR.RIDE + 0.22) {
       sdfNormal(this.pos.x, this.pos.y, this.pos.z, _n);
       if (up.dot(_n) > 0.55 && this.vel.dot(_n) < 2.5) grounded = true;
     }
@@ -131,6 +136,7 @@ export class Car {
         this.jumped = false;
         this.doubleJumped = false;
         this.dodging = 0;
+        this.dodgeT = 0;
         if (this.events && this.events.land) this.events.land(this);
       }
       this.onGround = true;
@@ -209,7 +215,8 @@ export class Car {
         this.jumped = true;
         this.sinceJump = 0.2;
       }
-      this.vel.y -= GRAVITY * dt;
+      const flipLift = this.dodging > 0 && this.dodgeT < 0.35 ? 0.35 : 1;
+      this.vel.y -= GRAVITY * dt * flipLift;
       this.sinceJump += dt;
 
       if (this.jumpHold > 0) {
@@ -238,10 +245,25 @@ export class Car {
         this.quat.slerpQuaternions(this.rightFrom, this.rightTo, k * k * (3 - 2 * k));
         _w.set(0, 0, 0);
       } else if (this.dodging > 0) {
-        this.dodging -= dt;
-        const rate = (Math.PI * 2) / CAR.DODGE_TIME;
-        _w.set(this.dodgeF * rate, _w.y * 0.9, this.dodgeS * rate);
-        if (this.dodging <= 0) _w.multiplyScalar(0.25);
+        // scripted flip: exactly one full turn around the dodge axis, then back to the start attitude
+        this.dodgeT += dt;
+        const T = CAR.DODGE_TIME;
+        const k = Math.min(1, this.dodgeT / T);
+        const ease = (x) => 1 - Math.pow(1 - x, 1.7);
+        const ang = Math.PI * 2 * ease(k);
+        if (k >= 1) {
+          this.quat.copy(this.dodgeFrom);
+          this.dodging = 0;
+          _w.set(0, 0, 0);
+        } else {
+          _q.setFromAxisAngle(this.dodgeAxis, ang);
+          this.quat.copy(this.dodgeFrom).multiply(_q);
+          const rate = (ang - Math.PI * 2 * ease(Math.max(0, k - dt / T))) / dt;
+          _w.copy(this.dodgeAxis).multiplyScalar(rate);
+          this.dodging = T - this.dodgeT;
+        }
+        this.angVel.copy(_w).applyQuaternion(this.quat);
+        _w.set(0, 0, 0); // orientation already set: skip integration below
       } else {
         const roll = c.roll !== 0 ? c.roll : (c.drift ? c.yaw : 0);
         const yaw = c.drift ? 0 : c.yaw;
@@ -251,10 +273,22 @@ export class Car {
         _w.y = yaw !== 0 ? _w.y + (-yaw * CAR.AIR_YAW - _w.y) * resp : _w.y * (1 - damp);
         _w.z = roll !== 0 ? _w.z + (roll * CAR.AIR_ROLL - _w.z) * resp : _w.z * (1 - damp * 1.4);
       }
-      this.angVel.copy(_w).applyQuaternion(this.quat);
+      const scripted = this.dodging > 0;
+      if (!scripted) this.angVel.copy(_w).applyQuaternion(this.quat);
       const wl = this.angVel.length();
-      if (wl > CAR.MAX_ANG && this.dodging <= 0) this.angVel.multiplyScalar(CAR.MAX_ANG / wl);
-      const w = this.angVel.length();
+      if (wl > CAR.MAX_ANG && !scripted) this.angVel.multiplyScalar(CAR.MAX_ANG / wl);
+      const w = scripted ? 0 : this.angVel.length();
+      // landing assist: falling towards a surface without stick input -> gently turn wheels down
+      if (this.assist && this.dodging <= 0 && this.righting <= 0 && c.pitch === 0 && c.roll === 0 && !c.drift && this.vel.y < 0) {
+        const dd = sdf(this.pos.x, this.pos.y, this.pos.z);
+        if (dd < 3.2) {
+          sdfNormal(this.pos.x, this.pos.y, this.pos.z, _n);
+          this.up(_up);
+          _q.setFromUnitVectors(_up, _n);
+          _qi.copy(_id).slerp(_q, Math.min(1, 5 * dt));
+          this.quat.premultiply(_qi).normalize();
+        }
+      }
       if (w > 1e-5) {
         _v.copy(this.angVel).multiplyScalar(1 / w);
         _q.setFromAxisAngle(_v, w * dt);
@@ -289,6 +323,11 @@ export class Car {
     _left.set(fwd.z, 0, -fwd.x); // left of horizontal forward
     const spd = this.vel.length();
     if (this.vel.y < 0) this.vel.y = 0;
+    else this.vel.y *= 0.65;
+    this.dodgeT = 0;
+    this.dodgeFrom.copy(this.quat);
+    this.dodgeAxis.set(f, 0, s).normalize();
+    this.angVel.set(0, 0, 0);
     const fi = f * (f < 0 ? CAR.DODGE_IMPULSE * 1.07 : CAR.DODGE_IMPULSE);
     const si = s * CAR.DODGE_IMPULSE * (1 + 0.9 * spd / CAR.MAX_SPEED);
     this.vel.addScaledVector(fwd, fi).addScaledVector(_left, -si);
@@ -327,8 +366,10 @@ export class Car {
           _v.copy(this.vel).addScaledVector(_cn, -this.vel.dot(_cn));
           this.vel.addScaledVector(_v, -Math.min(1, 0.25 * -vn / Math.max(0.5, _v.length()) + 3 * dt));
           // tipping torque around the contact (zero for flat landings)
-          _w.crossVectors(_r, _cn).multiplyScalar(-vn * 1.4);
-          this.angVel.multiplyScalar(0.75).add(_w);
+          if (this.dodging <= 0 && this.righting <= 0) {
+            _w.crossVectors(_r, _cn).multiplyScalar(-vn * 1.4);
+            this.angVel.multiplyScalar(0.75).add(_w);
+          }
           if (this.events && this.events.thud && -vn > 3) this.events.thud(this, -vn);
         }
       }
@@ -337,9 +378,9 @@ export class Car {
     if (this.surfaceContact && !grounded && this.righting <= 0) {
       this.up(_up);
       sdfNormal(this.pos.x, this.pos.y, this.pos.z, _n);
-      if (_up.dot(_n) < 0.5 && this.vel.lengthSq() < 30) {
+      if (_up.dot(_n) < 0.5 && this.vel.lengthSq() < 60) {
         this.turtleTime += dt;
-        if (this.turtleTime > (this.controls.jump ? 0.12 : 0.5)) {
+        if (this.turtleTime > (this.controls.jump ? 0.08 : 0.3)) {
           this.turtleTime = 0;
           // target: wheels on the surface, keep the heading
           this.forward(_t).addScaledVector(_n, -_t.dot(_n));
@@ -358,6 +399,47 @@ export class Car {
         }
       } else this.turtleTime = 0;
     }
+  }
+
+  // ---- network state (full state so guests can re-simulate their own car)
+  netState() {
+    const r = (v) => Math.round(v * 1000) / 1000;
+    const f = (this.onGround ? 1 : 0) | (this.jumped ? 2 : 0) | (this.doubleJumped ? 4 : 0) | (this.boosting ? 8 : 0)
+      | (this.supersonic ? 16 : 0) | (this.demolished ? 32 : 0) | (this.prevJump ? 64 : 0) | (this.surfaceContact ? 128 : 0);
+    return [
+      r(this.pos.x), r(this.pos.y), r(this.pos.z),
+      r(this.quat.x), r(this.quat.y), r(this.quat.z), r(this.quat.w),
+      r(this.vel.x), r(this.vel.y), r(this.vel.z),
+      r(this.angVel.x), r(this.angVel.y), r(this.angVel.z),
+      r(this.boost), f, r(this.controls.steer),
+      r(this.sinceJump), r(this.jumpHold), r(this.groundLock),
+      r(this.dodging), r(this.dodgeT), r(this.dodgeAxis.x), r(this.dodgeAxis.z),
+      r(this.dodgeFrom.x), r(this.dodgeFrom.y), r(this.dodgeFrom.z), r(this.dodgeFrom.w),
+      r(this.righting), r(this.normal.x), r(this.normal.y), r(this.normal.z),
+      r(this.respawnTimer), r(this.turtleTime),
+    ];
+  }
+
+  applyNetState(a) {
+    this.pos.set(a[0], a[1], a[2]);
+    this.quat.set(a[3], a[4], a[5], a[6]).normalize();
+    this.vel.set(a[7], a[8], a[9]);
+    this.angVel.set(a[10], a[11], a[12]);
+    this.boost = a[13];
+    const f = a[14];
+    this.onGround = !!(f & 1); this.jumped = !!(f & 2); this.doubleJumped = !!(f & 4);
+    this.boosting = !!(f & 8); this.supersonic = !!(f & 16); this.demolished = !!(f & 32);
+    this.prevJump = !!(f & 64); this.surfaceContact = !!(f & 128);
+    this.netSteer = a[15];
+    this.sinceJump = a[16]; this.jumpHold = a[17]; this.groundLock = a[18];
+    this.dodging = a[19]; this.dodgeT = a[20];
+    this.dodgeAxis.set(a[21], 0, a[22]);
+    if (this.dodgeAxis.lengthSq() > 1e-6) this.dodgeAxis.normalize(); else this.dodgeAxis.set(1, 0, 0);
+    this.dodgeFrom.set(a[23], a[24], a[25], a[26]).normalize();
+    this.righting = a[27];
+    this.normal.set(a[28], a[29], a[30]);
+    this.respawnTimer = a[31];
+    this.turtleTime = a[32];
   }
 
   // world-space corner positions of the hitbox (for debug / effects)

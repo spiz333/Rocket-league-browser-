@@ -7,7 +7,12 @@ import { Hud } from './hud.js';
 import { CameraRig } from './camera.js';
 import { Game } from './game.js';
 import { PAINTS, buildCarMesh } from './models.js';
-import { TEAM_COLORS } from './config.js';
+import { TEAM_COLORS, BOT_NAMES } from './config.js';
+import { Net, errorText, cleanCode } from './net.js';
+import { EffectComposer } from '../vendor/postprocessing/EffectComposer.js';
+import { RenderPass } from '../vendor/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from '../vendor/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from '../vendor/postprocessing/OutputPass.js';
 
 const $ = (id) => document.getElementById(id);
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
@@ -17,13 +22,19 @@ if (isTouch) document.body.classList.add('touch');
 const STORE_KEY = 'nitro-strikers-settings-v1';
 const DEFAULTS = {
   teamSize: 2, difficulty: 'normal', duration: 300, body: 0, paint: 0,
-  sound: 1, autoGas: 1, invertPitch: 0, vibrate: 1, quality: isTouch ? 'low' : 'high',
+  sound: 1, autoGas: 1, invertPitch: 0, vibrate: 1, quality: isTouch ? 'medium' : 'high', gfx: 2,
   replays: 1, camDist: 4.6, ballCam: 1,
+  steerCurve: 1.3, btnSize: 'normal', assist: 1, name: '',
 };
 let settings = { ...DEFAULTS };
 try {
   const raw = localStorage.getItem(STORE_KEY);
-  if (raw) settings = { ...DEFAULTS, ...JSON.parse(raw) };
+  if (raw) {
+    const saved = JSON.parse(raw);
+    // graphics presets changed in v2: start from the new default
+    if (saved.gfx !== DEFAULTS.gfx) { delete saved.quality; saved.gfx = DEFAULTS.gfx; }
+    settings = { ...DEFAULTS, ...saved };
+  }
 } catch (_) { /* storage unavailable */ }
 function saveSettings() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(settings)); } catch (_) { /* ignore */ }
@@ -36,8 +47,12 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: quality === 'high'
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
+const useShadows = quality !== 'low';
+renderer.shadowMap.enabled = useShadows;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 function pixelRatio() {
-  return Math.min(window.devicePixelRatio || 1, settings.quality === 'high' ? 2 : 1.25);
+  const cap = { low: 1.25, medium: 1.6, high: 2 }[settings.quality] || 1.25;
+  return Math.min(window.devicePixelRatio || 1, cap);
 }
 renderer.setPixelRatio(pixelRatio());
 
@@ -49,6 +64,17 @@ scene.add(new THREE.HemisphereLight(0xc4d6ff, 0x20202e, 1.5));
 const sun = new THREE.DirectionalLight(0xffffff, 2.2);
 sun.position.set(30, 60, 20);
 scene.add(sun);
+if (useShadows) {
+  sun.castShadow = true;
+  const sz = quality === 'high' ? 2048 : 1024;
+  sun.shadow.mapSize.set(sz, sz);
+  const sc = sun.shadow.camera;
+  sc.left = -52; sc.right = 52; sc.top = 62; sc.bottom = -62; sc.near = 10; sc.far = 160;
+  sun.shadow.bias = -0.0008;
+  sun.shadow.normalBias = 0.03;
+  sun.target.position.set(0, 0, 0);
+  scene.add(sun.target);
+}
 const fill = new THREE.DirectionalLight(0x8fa4ff, 0.7);
 fill.position.set(-30, 25, -40);
 scene.add(fill);
@@ -87,12 +113,27 @@ const audio = new Audio();
 const hud = new Hud();
 const input = new Input($('controls'));
 const rig = new CameraRig(camera);
-const game = new Game({ scene, rig, audio, particles, hud, input, arena, padsView, quality });
+const game = new Game({ scene, rig, audio, particles, hud, input, arena, padsView, quality, shadows: useShadows });
+
+// bloom for the neon look (highest quality only)
+let composer = null;
+let bloom = null;
+if (quality === 'high') {
+  composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+  bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.55, 0.45, 0.82);
+  composer.addPass(bloom);
+  composer.addPass(new OutputPass());
+}
 
 function applySettings() {
   input.settings.autoGas = !!+settings.autoGas;
   input.settings.invertPitch = !!+settings.invertPitch;
   input.settings.vibrate = !!+settings.vibrate;
+  input.settings.steerCurve = +settings.steerCurve || 1.3;
+  document.body.classList.toggle('btn-small', settings.btnSize === 'small');
+  document.body.classList.toggle('btn-large', settings.btnSize === 'large');
+  if (game.player) game.player.assist = !!+settings.assist;
   audio.setEnabled(!!+settings.sound);
   rig.distance = +settings.camDist;
   rig.height = 1.2 + rig.distance * 0.1;
@@ -105,6 +146,11 @@ function applySettings() {
 function onResize() {
   const w = window.innerWidth, h = window.innerHeight;
   renderer.setSize(w, h);
+  if (composer) {
+    composer.setPixelRatio(renderer.getPixelRatio());
+    composer.setSize(w, h);
+    bloom.resolution.set(w / 2, h / 2);
+  }
   rig.setFov(w / h);
   const buf = renderer.getDrawingBufferSize(new THREE.Vector2());
   particles.setScale(buf.y, camera.fov);
@@ -115,7 +161,7 @@ window.addEventListener('resize', onResize);
 window.addEventListener('orientationchange', () => setTimeout(onResize, 200));
 
 // ---------- screens ----------
-const screens = ['main', 'play', 'garage', 'settings', 'help', 'pause', 'end'];
+const screens = ['main', 'play', 'online', 'lobby', 'garage', 'settings', 'help', 'pause', 'end'];
 let current = 'main';
 let previous = 'main';
 let appMode = 'menu'; // menu | garage | match
@@ -125,6 +171,7 @@ function showScreen(name) {
   if (name !== current) previous = current;
   current = name;
   for (const s of screens) $('screen-' + s).classList.toggle('hidden', s !== name);
+  syncSegments();
   if (name === 'garage') enterGarage();
   else if (appMode === 'garage') exitGarage();
 }
@@ -133,17 +180,24 @@ function hideScreens() {
   current = null;
 }
 
-function setupSegments() {
+function syncSegments() {
   document.querySelectorAll('.seg[data-opt]').forEach(seg => {
     const opt = seg.dataset.opt;
-    const sync = () => seg.querySelectorAll('button').forEach(b => b.classList.toggle('sel', String(settings[opt]) === b.dataset.val));
-    sync();
+    seg.querySelectorAll('button').forEach(b => b.classList.toggle('sel', String(settings[opt]) === b.dataset.val));
+  });
+}
+
+function setupSegments() {
+  syncSegments();
+  document.querySelectorAll('.seg[data-opt]').forEach(seg => {
+    const opt = seg.dataset.opt;
     seg.addEventListener('click', e => {
       const b = e.target.closest('button');
       if (!b) return;
       const raw = b.dataset.val;
       settings[opt] = isNaN(+raw) ? raw : +raw;
-      sync();
+      syncSegments();
+      if (session && session.isHost && ['teamSize', 'difficulty', 'duration'].includes(opt)) lobbyOptsChanged();
       saveSettings();
       audio.init();
       audio.click();
@@ -189,11 +243,19 @@ document.addEventListener('click', e => {
       resume();
       break;
     case 'restart':
-      if (lastMatch) startMatch(lastMatch);
+      if (session) { if (session.isHost) hostStartMatch(); }
+      else if (lastMatch) startMatch(lastMatch);
       break;
     case 'quit':
-      quitToMenu();
+      if (session && session.isHost && current === 'end') hostBackToLobby();
+      else quitToMenu();
       break;
+    case 'host': hostRoom(); break;
+    case 'join': joinRoom($('join-code').value); break;
+    case 'share': shareRoom(); break;
+    case 'leave': leaveSession(); showScreen('online'); break;
+    case 'switch-team': switchTeam(); break;
+    case 'net-start': hostStartMatch(); break;
   }
 });
 
@@ -225,7 +287,7 @@ function exitGarage() {
 }
 
 // ---------- match flow ----------
-function startMatch(opts) {
+function startMatch(opts, setupOverride = null) {
   audio.init();
   if (isTouch && document.documentElement.requestFullscreen && !document.fullscreenElement) {
     document.documentElement.requestFullscreen({ navigationUI: 'hide' })
@@ -238,7 +300,7 @@ function startMatch(opts) {
   hideScreens();
   const paint = PAINTS[settings.paint] ? PAINTS[settings.paint].color : null;
   game.paused = false;
-  game.setup({
+  game.setup(setupOverride || {
     mode: opts.mode,
     teamSize: settings.teamSize,
     difficulty: settings.difficulty,
@@ -247,6 +309,8 @@ function startMatch(opts) {
     paint,
     replays: !!+settings.replays,
   });
+  game.net = session ? session.net : null;
+  if (game.player) game.player.assist = !!+settings.assist;
   rig.ballCam = !!+settings.ballCam;
   $('btn-cam').classList.toggle('active', rig.ballCam);
   hud.setScore(0, 0);
@@ -259,8 +323,9 @@ function startMatch(opts) {
 }
 
 function pause() {
-  if (appMode !== 'match' || game.state === 'ended' || game.paused) return;
-  game.paused = true;
+  if (appMode !== 'match' || game.state === 'ended' || game.paused || current === 'pause') return;
+  // online matches keep running for everybody
+  if (!session) game.paused = true;
   input.enabled = false;
   input.reset();
   audio.updateEngine(0, 0, false, false);
@@ -273,6 +338,7 @@ function resume() {
   input.reset();
 }
 function quitToMenu() {
+  if (session) leaveSession();
   appMode = 'menu';
   game.paused = false;
   hud.show(false);
@@ -312,6 +378,10 @@ function showEnd(res) {
   const tbody = $('end-table').querySelector('tbody');
   tbody.innerHTML = sorted.map(c => `<tr class="t${c.team}${c.isPlayer ? ' me' : ''}"><td>${c.name}${c === mvp ? '<span class="mvp">★ MVP</span>' : ''}</td><td>${c.points}</td><td>${c.goals}</td><td>${c.assists}</td><td>${c.saves}</td><td>${c.shots}</td></tr>`).join('');
   hud.clearMessage();
+  const online = !!session;
+  $('btn-end-again').classList.toggle('hidden', online && !session.isHost);
+  $('btn-end-quit').textContent = online ? (session.isHost ? 'LOBBY' : 'VERLATEN') : 'HOOFDMENU';
+  $('end-note').textContent = online && !session.isHost ? 'Wachten tot de host een nieuwe wedstrijd start…' : '';
   showScreen('end');
 }
 
@@ -331,14 +401,275 @@ function toggleBallCam() {
 input.on('ballcam', () => { if (appMode === 'match') toggleBallCam(); });
 input.on('pause', () => {
   if (appMode !== 'match') return;
-  if (game.paused && current === 'pause') resume(); else pause();
+  if (current === 'pause') resume(); else pause();
 });
 input.on('any', () => {
-  if (appMode === 'match' && game.state === 'replay') game.skipReplay();
+  if (appMode === 'match' && game.state === 'replay' && game.role !== 'client') game.skipReplay();
   if (appMode === 'match') document.body.classList.add('played');
 });
-document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && !session) pause(); });
 $('btn-rotate-ignore').addEventListener('click', () => document.body.classList.add('ignore-rotate'));
+
+// ---------- online multiplayer ----------
+let session = null; // { net, isHost, players: [{id,name,team,body,paint}], inMatch }
+const lobbyEl = (id) => $(id);
+
+function playerName() {
+  const n = ($('player-name').value || settings.name || '').trim().slice(0, 14);
+  return n || 'Speler';
+}
+function myPaint() { return PAINTS[settings.paint] ? PAINTS[settings.paint].color : null; }
+function setOnlineStatus(t) { $('online-status').textContent = t || ''; }
+
+function newSession(isHost) {
+  const net = new Net();
+  session = { net, isHost, players: [], inMatch: false, myId: isHost ? 'host' : null };
+  document.body.classList.toggle('net-host', isHost);
+  document.body.classList.toggle('net-guest', !isHost);
+  net.on('message', (from, msg) => onNetMessage(from, msg));
+  net.on('join', () => {});
+  net.on('leave', (id) => onPeerLeft(id));
+  net.on('hostlost', () => {
+    if (!session) return;
+    const wasMatch = appMode === 'match';
+    leaveSession();
+    if (wasMatch) quitToMenu();
+    showScreen('online');
+    setOnlineStatus('De host heeft het spel verlaten.');
+  });
+  net.on('error', (e) => setOnlineStatus(errorText(e)));
+  return session;
+}
+
+function leaveSession() {
+  if (!session) return;
+  try { if (!session.isHost) session.net.send('host', { t: 'bye' }); } catch (_) { /* ignore */ }
+  session.net.close();
+  session = null;
+  game.net = null;
+  document.body.classList.remove('net-host', 'net-guest');
+}
+
+async function hostRoom() {
+  settings.name = playerName(); saveSettings();
+  setOnlineStatus('Kamer maken…');
+  leaveSession();
+  const sess = newSession(true);
+  try {
+    await sess.net.host();
+  } catch (e) {
+    leaveSession();
+    setOnlineStatus(errorText(e));
+    return;
+  }
+  sess.players = [{ id: 'host', name: playerName(), team: 0, body: settings.body, paint: myPaint() }];
+  setOnlineStatus('');
+  renderLobby();
+  showScreen('lobby');
+}
+
+async function joinRoom(code) {
+  code = cleanCode(code);
+  if (code.length !== 5) { setOnlineStatus('Vul een code van 5 tekens in.'); return; }
+  settings.name = playerName(); saveSettings();
+  setOnlineStatus('Verbinden met ' + code + '…');
+  leaveSession();
+  const sess = newSession(false);
+  try {
+    await sess.net.join(code);
+  } catch (e) {
+    leaveSession();
+    setOnlineStatus(errorText(e));
+    return;
+  }
+  sess.net.send('host', { t: 'hello', name: playerName(), body: settings.body, paint: myPaint() });
+  setOnlineStatus('Verbonden! Wachten op de lobby…');
+}
+
+function lobbyMessage() {
+  return { t: 'lobby', code: session.net.code, players: session.players, opts: { teamSize: settings.teamSize, difficulty: settings.difficulty, duration: settings.duration } };
+}
+function broadcastLobby() {
+  if (!session || !session.isHost) return;
+  session.net.broadcast(lobbyMessage());
+  renderLobby();
+}
+function lobbyOptsChanged() {
+  // never make teams smaller than the number of humans on them
+  const need = Math.max(1, ...[0, 1].map(t => session.players.filter(p => p.team === t).length));
+  if (settings.teamSize < need) { settings.teamSize = need; syncSegments(); }
+  broadcastLobby();
+}
+
+function renderLobby(msg) {
+  if (!session) return;
+  const players = msg ? msg.players : session.players;
+  const opts = msg ? msg.opts : { teamSize: settings.teamSize };
+  $('room-code').textContent = msg ? msg.code : session.net.code;
+  if (msg && !session.isHost) {
+    settings.teamSize = msg.opts.teamSize; settings.difficulty = msg.opts.difficulty; settings.duration = msg.opts.duration;
+    syncSegments();
+  }
+  for (const team of [0, 1]) {
+    const ul = $('lobby-team' + team);
+    const list = players.filter(p => p.team === team);
+    let html = list.map(p => `<li class="${p.id === session.myId ? 'me' : ''}">${escapeHtml(p.name)}${p.id === 'host' ? ' <small>host</small>' : ''}</li>`).join('');
+    for (let i = list.length; i < opts.teamSize; i++) html += '<li class="bot">Bot</li>';
+    ul.innerHTML = html;
+  }
+  const humans = players.length;
+  $('lobby-status').textContent = session.isHost
+    ? (humans > 1 ? `${humans} spelers in de kamer. Klaar? Druk op START.` : 'Wachten op vrienden… je kunt ook alvast starten tegen bots.')
+    : 'Wachten tot de host de wedstrijd start…';
+}
+
+function escapeHtml(t) {
+  return String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function shareRoom() {
+  if (!session) return;
+  const url = location.origin + location.pathname + '?join=' + session.net.code;
+  const text = `Doe mee met mijn Nitro Strikers-wedstrijd! Code: ${session.net.code}`;
+  if (navigator.share) navigator.share({ title: 'Nitro Strikers', text, url }).catch(() => {});
+  else if (navigator.clipboard) navigator.clipboard.writeText(url).then(() => { $('share-note').textContent = 'Link gekopieerd!'; }).catch(() => { $('share-note').textContent = url; });
+  else $('share-note').textContent = url;
+}
+
+function switchTeam() {
+  if (!session) return;
+  if (session.isHost) hostSwitchTeam('host');
+  else session.net.send('host', { t: 'team' });
+}
+
+function hostSwitchTeam(id) {
+  const p = session.players.find(x => x.id === id);
+  if (!p) return;
+  const other = 1 - p.team;
+  const count = session.players.filter(x => x.team === other).length;
+  if (count >= 3) return;
+  p.team = other;
+  if (count + 1 > settings.teamSize) { settings.teamSize = count + 1; syncSegments(); }
+  broadcastLobby();
+}
+
+function onPeerLeft(id) {
+  if (!session || !session.isHost) return;
+  const p = session.players.find(x => x.id === id);
+  session.players = session.players.filter(x => x.id !== id);
+  if (session.inMatch) {
+    game.dropRemote(id);
+    if (p) hud.feed(`${escapeHtml(p.name)} heeft het spel verlaten`);
+  }
+  broadcastLobby();
+}
+
+function onNetMessage(from, msg) {
+  if (!session || !msg || typeof msg !== 'object') return;
+  if (session.isHost) {
+    switch (msg.t) {
+      case 'hello': {
+        if (session.inMatch) { session.net.send(from, { t: 'busy' }); return; }
+        if (session.players.some(p => p.id === from)) return;
+        const c0 = session.players.filter(p => p.team === 0).length, c1 = session.players.filter(p => p.team === 1).length;
+        if (c0 >= 3 && c1 >= 3) { session.net.send(from, { t: 'full' }); return; }
+        const team = c0 <= c1 ? 0 : 1;
+        const name = String(msg.name || 'Speler').replace(/[<>&"'`]/g, '').slice(0, 14) || 'Speler';
+        session.players.push({ id: from, name, team, body: (msg.body | 0) % 3, paint: typeof msg.paint === 'number' ? msg.paint : null });
+        const n = session.players.filter(p => p.team === team).length;
+        if (n > settings.teamSize) { settings.teamSize = n; syncSegments(); }
+        session.net.send(from, { t: 'welcome', id: from });
+        broadcastLobby();
+        audio.click();
+        break;
+      }
+      case 'team': hostSwitchTeam(from); break;
+      case 'i': game.receiveInput(from, msg); break;
+      case 'bye': session.net.kick(from); onPeerLeft(from); break;
+      default: break;
+    }
+    return;
+  }
+  // guest
+  switch (msg.t) {
+    case 'welcome': session.myId = msg.id; break;
+    case 'lobby':
+      if (appMode !== 'match' || current === 'end') {
+        renderLobby(msg);
+        if (current !== 'lobby' && (current === 'online' || current === 'end')) {
+          if (appMode === 'match') quitMatchView();
+          showScreen('lobby');
+        }
+      }
+      session.lastLobby = msg;
+      break;
+    case 'start': guestStartMatch(msg); break;
+    case 's': if (appMode === 'match' && game.role === 'client') game.receiveSnapshot(msg); break;
+    case 'e': if (appMode === 'match' && game.role === 'client') game.applyFx(msg.e); break;
+    case 'busy': leaveSession(); setOnlineStatus('Er wordt al gespeeld in deze kamer. Probeer het straks opnieuw.'); break;
+    case 'full': leaveSession(); setOnlineStatus('Deze kamer is vol.'); break;
+    case 'tolobby':
+      quitMatchView();
+      if (session.lastLobby) renderLobby(session.lastLobby);
+      showScreen('lobby');
+      break;
+    default: break;
+  }
+}
+
+function buildRoster() {
+  const names = [...BOT_NAMES].sort(() => Math.random() - 0.5);
+  const roster = [];
+  for (const team of [0, 1]) {
+    const humans = session.players.filter(p => p.team === team);
+    for (const h of humans) roster.push({ team, name: h.name, owner: h.id, body: h.body, paint: h.paint });
+    for (let i = humans.length; i < settings.teamSize; i++) roster.push({ team, name: names.pop(), owner: null, body: (Math.random() * 3) | 0, paint: null });
+  }
+  return roster;
+}
+
+function onlineSetup(roster, opts, role, localOwner) {
+  return {
+    mode: 'match', online: true, role, roster, localOwner,
+    teamSize: opts.teamSize, difficulty: opts.difficulty, duration: opts.duration,
+    replays: !!+settings.replays,
+  };
+}
+
+function hostStartMatch() {
+  if (!session || !session.isHost) return;
+  const roster = buildRoster();
+  const opts = { teamSize: settings.teamSize, difficulty: settings.difficulty, duration: settings.duration };
+  session.inMatch = true;
+  session.net.broadcast({ t: 'start', roster, opts });
+  startMatch({ mode: 'online' }, onlineSetup(roster, opts, 'host', 'host'));
+}
+
+function guestStartMatch(msg) {
+  if (current === 'pause') hideScreens();
+  session.inMatch = true;
+  startMatch({ mode: 'online' }, onlineSetup(msg.roster, msg.opts, 'client', session.myId));
+}
+
+function quitMatchView() {
+  appMode = 'menu';
+  hud.show(false);
+  hud.clearMessage();
+  $('controls').classList.add('hidden');
+  document.body.classList.remove('in-match', 'replay');
+  input.enabled = false;
+  audio.updateEngine(0, 0, false, false);
+  game.net = null;
+  startAttract();
+}
+
+function hostBackToLobby() {
+  session.inMatch = false;
+  session.net.broadcast({ t: 'tolobby' });
+  quitMatchView();
+  broadcastLobby();
+  showScreen('lobby');
+}
 
 // ---------- main loop ----------
 let last = performance.now();
@@ -369,7 +700,7 @@ function frame(now) {
     if (appMode === 'match') updateHud(dt);
   }
   particles.update(dt);
-  renderer.render(scene, camera);
+  if (composer) composer.render(); else renderer.render(scene, camera);
 }
 
 let attractTimer = 0;
@@ -426,10 +757,20 @@ function updateHud(dt) {
 }
 
 // ---------- boot ----------
+$('player-name').value = settings.name || '';
+$('join-code').addEventListener('input', (e) => { e.target.value = cleanCode(e.target.value); });
+for (const id of ['player-name', 'join-code']) {
+  $(id).addEventListener('keydown', (e) => e.stopPropagation());
+  $(id).addEventListener('keyup', (e) => e.stopPropagation());
+}
 setupSegments();
 applySettings();
 startAttract();
 showScreen('main');
+{
+  const joinCode = cleanCode(new URLSearchParams(location.search).get('join'));
+  if (joinCode) { $('join-code').value = joinCode; showScreen('online'); setOnlineStatus('Vul je naam in en druk op MEEDOEN.'); }
+}
 requestAnimationFrame((t) => { last = t; frame(t); });
 setTimeout(() => $('loading').classList.add('done'), 150);
 
@@ -438,4 +779,4 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
 }
 
 // handy for debugging from the console
-window.__nitro = { game, rig, settings, renderer };
+window.__nitro = { game, rig, settings, renderer, get session() { return session; } };

@@ -127,8 +127,8 @@ function buildWall(perim, profile, colorFn, skipMouth = true, uvScale = 4) {
 }
 
 // ---------- textures ----------
-function fieldTexture(maxAniso) {
-  const cw = 1024, ch = Math.round(1024 * L / W);
+function fieldTexture(maxAniso, big) {
+  const cw = big ? 2048 : 1024, ch = Math.round(cw * L / W);
   const c = document.createElement('canvas');
   c.width = cw; c.height = ch;
   const g = c.getContext('2d');
@@ -136,11 +136,30 @@ function fieldTexture(maxAniso) {
   const X = (x) => (x + W) * sx;
   const Z = (z) => (z + L) * sz; // top of canvas = blue goal (z = -L)
 
-  // turf stripes
+  // turf: mowing stripes with a faint cross pattern
   const stripes = 14;
   for (let i = 0; i < stripes; i++) {
-    g.fillStyle = i % 2 ? '#2f7d3a' : '#2a7235';
+    g.fillStyle = i % 2 ? '#2f7d3a' : '#29703a';
     g.fillRect(0, (i * ch) / stripes, cw, ch / stripes + 1);
+  }
+  const cross = 10;
+  for (let i = 0; i < cross; i++) {
+    if (i % 2) continue;
+    g.fillStyle = 'rgba(255,255,255,0.025)';
+    g.fillRect((i * cw) / cross, 0, cw / cross, ch);
+  }
+  // grass blades
+  const blades = Math.round(cw * ch / 60);
+  for (let i = 0; i < blades; i++) {
+    const x = Math.random() * cw, y = Math.random() * ch;
+    const l = sx * (0.06 + Math.random() * 0.08);
+    const shade = Math.random();
+    g.strokeStyle = shade < 0.5 ? `rgba(20,60,25,${0.25 + shade * 0.3})` : `rgba(120,190,110,${0.08 + (shade - 0.5) * 0.25})`;
+    g.lineWidth = Math.max(1, sx * 0.025);
+    g.beginPath();
+    g.moveTo(x, y);
+    g.lineTo(x + (Math.random() - 0.5) * l * 0.6, y - l);
+    g.stroke();
   }
   // team tint halves
   const tint = g.createLinearGradient(0, 0, 0, ch);
@@ -258,6 +277,7 @@ export const GLOW_TEX = { tex: null };
 // ---------- main builder ----------
 export function buildArena(scene, renderer, quality) {
   const high = quality === 'high';
+  const nice = quality !== 'low';
   const group = new THREE.Group();
   scene.add(group);
   const blue = new THREE.Color(TEAM_COLORS[0].main);
@@ -286,9 +306,10 @@ export function buildArena(scene, renderer, quality) {
   }
   floorGeo.rotateX(-Math.PI / 2);
   const floorMat = new THREE.MeshStandardMaterial({
-    map: fieldTexture(renderer.capabilities.getMaxAnisotropy()), roughness: 0.85, metalness: 0.0,
+    map: fieldTexture(renderer.capabilities.getMaxAnisotropy(), high), roughness: 0.85, metalness: 0.0,
   });
   const floor = new THREE.Mesh(floorGeo, floorMat);
+  floor.receiveShadow = true;
   group.add(floor);
 
   // lower boards (solid)
@@ -299,6 +320,7 @@ export function buildArena(scene, renderer, quality) {
   const boards = new THREE.Mesh(boardsGeo, new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: 0.55, metalness: 0.35, map: panelTexture(),
   }));
+  boards.receiveShadow = true;
   group.add(boards);
 
   // neon strip on top of the boards
@@ -331,6 +353,7 @@ export function buildArena(scene, renderer, quality) {
     // goal floor
     const gf = new THREE.Mesh(new THREE.PlaneGeometry(GW * 2, GD + RW + 0.2), new THREE.MeshStandardMaterial({ color: new THREE.Color(tc.dark).multiplyScalar(0.6), roughness: 0.8 }));
     gf.rotation.x = -Math.PI / 2;
+    gf.receiveShadow = true;
     gf.position.set(0, 0.002, gz + side * (GD - RW - 0.2) / 2);
     g.add(gf);
     // goal line
@@ -372,9 +395,9 @@ export function buildArena(scene, renderer, quality) {
     bar.position.set(0, GH + 0.3, gz + side * 0.25);
     g.add(bar);
     // goal glow light
-    const gLight = new THREE.PointLight(tc.glow, high ? 30 : 0, 16, 2);
+    const gLight = new THREE.PointLight(tc.glow, nice ? 30 : 0, 16, 2);
     gLight.position.set(0, GH * 0.6, gz + side * (GD - 1));
-    if (high) g.add(gLight);
+    if (nice) g.add(gLight);
   }
 
   // outer ground
@@ -424,7 +447,7 @@ export function buildArena(scene, renderer, quality) {
   group.add(new THREE.Mesh(standGeo, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide })));
 
   // crowd
-  const crowdCount = high ? 5000 : 2000;
+  const crowdCount = high ? 6000 : nice ? 4000 : 2000;
   const cp = new Float32Array(crowdCount * 3), cc = new Float32Array(crowdCount * 3), cph = new Float32Array(crowdCount);
   const totalU = perim[perim.length - 1].u;
   const palette = [0xffffff, 0xffd166, 0x9ad1ff, 0xff9aa2, 0xc3f584, 0xd0b3ff, 0x333333];
@@ -495,6 +518,33 @@ export function buildArena(scene, renderer, quality) {
     spr.position.set(px * 0.97, 43, pz * 0.97);
     group.add(spr);
   }
+
+  // soft light beams from the towers onto the pitch
+  if (nice) {
+    const beamGeo = new THREE.CylinderGeometry(1.2, 10, 1, 24, 1, true);
+    beamGeo.translate(0, -0.5, 0);
+    const beamMat = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+      uniforms: { color: { value: new THREE.Color(0x9fb6ff) } },
+      vertexShader: `varying float vY; void main(){ vY = position.y; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+      fragmentShader: `uniform vec3 color; varying float vY; void main(){ float a = pow(1.0 + vY, 2.0) * 0.05; gl_FragColor = vec4(color * a, a); }`,
+    });
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      const from = new THREE.Vector3(sx * (W + 26) * 0.97, 43, sz * (L + 22) * 0.97);
+      const to = new THREE.Vector3(sx * W * 0.3, 0, sz * L * 0.35);
+      const beam = new THREE.Mesh(beamGeo, beamMat);
+      const len = from.distanceTo(to) * 0.8;
+      beam.scale.set(1, len, 1);
+      beam.position.copy(from);
+      beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), to.clone().sub(from).normalize());
+      beam.renderOrder = 3;
+      group.add(beam);
+    }
+  }
+
+  // neon rim where the walls meet the ceiling
+  const rimGeo = buildWall(perim, profileRange(H - 0.35, H).map(p => ({ ...p })), (x, y, z) => teamTint(z, blue, red).multiplyScalar(1.4), false, 3);
+  group.add(new THREE.Mesh(rimGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, transparent: true, opacity: 0.8 })));
 
   // jumbotron above the center
   const jumboCanvas = document.createElement('canvas');

@@ -12,6 +12,10 @@
   --sr: env(safe-area-inset-right, 0px);
   --st: env(safe-area-inset-top, 0px);
   --sb: env(safe-area-inset-bottom, 0px);
+  --bs: 1;
+  --jump: calc(min(104px, 27vh) * var(--bs));
+  --boost: calc(min(92px, 24vh) * var(--bs));
+  --drift: calc(min(66px, 18vh) * var(--bs));
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
@@ -103,7 +107,7 @@ body.played #stick-hint { display: none; }
 .tbtn.pressed { transform: scale(0.92); filter: brightness(1.35); }
 
 #btn-jump {
-  --s: min(104px, 27vh);
+  --s: var(--jump);
   width: var(--s); height: var(--s);
   right: calc(22px + var(--sr));
   bottom: calc(24px + var(--sb));
@@ -112,11 +116,14 @@ body.played #stick-hint { display: none; }
   box-shadow: 0 6px 18px rgba(0,0,0,0.45), inset 0 -6px 12px rgba(0,0,0,0.25);
 }
 #btn-jump .lbl { font-size: 15px; }
+#btn-jump .swipe-hint { font-size: 9px; opacity: 0.75; letter-spacing: 0.02em; margin-top: 2px; font-weight: 700; }
+body.btn-small { --bs: 0.85; }
+body.btn-large { --bs: 1.18; }
 
 #btn-boost {
-  --s: min(92px, 24vh);
+  --s: var(--boost);
   width: var(--s); height: var(--s);
-  right: calc(22px + min(104px, 27vh) + 18px + var(--sr));
+  right: calc(22px + var(--jump) + 18px + var(--sr));
   bottom: calc(14px + var(--sb));
   background: radial-gradient(circle at 40% 30%, rgba(60,70,95,0.95), rgba(14,18,30,0.95));
   border: 2px solid rgba(255,255,255,0.2);
@@ -130,10 +137,10 @@ body.played #stick-hint { display: none; }
 #btn-boost .lbl { font-size: 10px; opacity: 0.8; }
 
 #btn-drift {
-  --s: min(66px, 18vh);
+  --s: var(--drift);
   width: var(--s); height: var(--s);
   right: calc(40px + var(--sr));
-  bottom: calc(24px + min(104px, 27vh) + 16px + var(--sb));
+  bottom: calc(24px + var(--jump) + 16px + var(--sb));
   background: radial-gradient(circle at 40% 30%, #ffd38a, #d9821a 65%, #8a4a08);
   border: 2px solid rgba(255,255,255,0.45);
   box-shadow: 0 4px 12px rgba(0,0,0,0.45);
@@ -533,3 +540,43 @@ body.replay #speedo { display: none; }
   #sub-msg { font-size: 14px; }
   #speedo { font-size: 14px; }
 }
+
+/* ================= online ================= */
+.btn.online { background: linear-gradient(90deg, rgba(125, 255, 176, 0.35), rgba(125, 255, 176, 0.06)); }
+.text-in {
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.25);
+  color: #fff;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  padding: 9px 12px;
+  border-radius: 6px;
+  width: min(240px, 50vw);
+  user-select: text;
+  -webkit-user-select: text;
+  touch-action: manipulation;
+}
+.text-in:focus { outline: 2px solid var(--nitro); }
+.text-in.code { width: 120px; text-transform: uppercase; letter-spacing: 0.25em; text-align: center; font-size: 18px; }
+.online-cards { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 4px; }
+.online-card { background: var(--panel); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 10px 16px 14px; width: min(320px, 90vw); }
+.online-card h3 { margin: 4px 0; font-size: 17px; font-style: italic; }
+.online-card p { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
+.online-card .btn { text-align: center; }
+.join-row { display: flex; gap: 8px; align-items: center; }
+.room-code { display: inline-block; margin-left: 10px; padding: 2px 12px; border-radius: 6px; background: rgba(89,243,255,0.15); color: var(--nitro); letter-spacing: 0.25em; font-style: normal; }
+.lobby-share { margin-top: 0; align-items: center; }
+.teams { display: flex; gap: 12px; margin: 10px 0; flex-wrap: wrap; }
+.team-col { flex: 1; min-width: 180px; max-width: 320px; background: var(--panel); border-radius: 8px; padding: 6px 12px; border-top: 4px solid #fff; }
+.team-col.t0 { border-color: var(--blue); }
+.team-col.t1 { border-color: var(--red); }
+.team-col h3 { margin: 2px 0 6px; font-size: 14px; letter-spacing: 0.1em; }
+.team-col ul { list-style: none; margin: 0; padding: 0; font-size: 14px; }
+.team-col li { padding: 4px 0; border-top: 1px solid rgba(255,255,255,0.06); display: flex; justify-content: space-between; gap: 8px; }
+.team-col li.bot { color: var(--muted); font-style: italic; }
+.team-col li.me { color: var(--nitro); font-weight: 700; }
+.team-col li small { color: var(--muted); }
+body:not(.net-host) #lobby-host-opts { opacity: 0.5; pointer-events: none; }
+body:not(.net-host) #btn-net-start { display: none; }
+body.net-guest #btn-pause-restart { display: none; }

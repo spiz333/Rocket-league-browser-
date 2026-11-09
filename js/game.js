@@ -2,7 +2,7 @@
 import * as THREE from '../vendor/three.module.min.js';
 import { ARENA, BALL, CAR, BOOST_PADS, KICKOFF_SPOTS, KICKOFF_SETS, BOT_NAMES, TEAM_COLORS, PHYS_STEP } from './config.js';
 import { Ball, stepBall, BallPredictor } from './ball.js';
-import { Car } from './car.js';
+import { Car, emptyControls } from './car.js';
 import { Bot, assignRoles } from './ai.js';
 import { buildCarMesh, buildBallMesh, buildShadowMesh } from './models.js';
 import { Recorder } from './replay.js';
@@ -19,6 +19,22 @@ const _rel = new THREE.Vector3();
 const _vc = new THREE.Vector3();
 const _w = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
+const _pre = new THREE.Vector3();
+const _col = new THREE.Color();
+const _q2 = new THREE.Quaternion();
+const NET_DELAY = 0.1;       // guests render others this far in the past (s)
+const SNAP_RATE = 1 / 30;    // host snapshot interval (s)
+const r3 = (v) => Math.round(v * 1000) / 1000;
+
+export function packControls(c) {
+  const r2 = (v) => Math.round((v || 0) * 100) / 100;
+  return [r2(c.throttle), r2(c.steer), r2(c.pitch), r2(c.yaw), r2(c.roll), r2(c.fwd ?? c.pitch), (c.jump ? 1 : 0) | (c.boost ? 2 : 0) | (c.drift ? 4 : 0)];
+}
+export function unpackControls(a, c) {
+  c.throttle = a[0]; c.steer = a[1]; c.pitch = a[2]; c.yaw = a[3]; c.roll = a[4]; c.fwd = a[5];
+  c.jump = !!(a[6] & 1); c.boost = !!(a[6] & 2); c.drift = !!(a[6] & 4);
+  return c;
+}
 
 function shuffle(a) {
   for (let i = a.length - 1; i > 0; i--) {
@@ -39,6 +55,7 @@ export class Game {
     this.arena = env.arena;
     this.padsView = env.padsView;
     this.quality = env.quality;
+    this.shadows = !!env.shadows;
 
     this.ball = new Ball();
     this.ballView = buildBallMesh();
@@ -72,6 +89,17 @@ export class Game {
     this.attractCar = null;
     this.bounceCooldown = 0;
     this.jumboDirty = true;
+    // networking
+    this.role = 'local';       // local | host | client
+    this.net = null;
+    this.remote = new Map();   // host: peerId -> { car, input, ack, jumpLatch }
+    this.snapshots = [];       // client: received snapshots
+    this.netTime = 0;
+    this.netTimer = 0;
+    this.inputSeq = 0;
+    this.inputHistory = [];
+    this.ownAcc = 0;
+    this.ownOffset = new THREE.Vector3();
   }
 
   // ---------- setup ----------
@@ -83,23 +111,35 @@ export class Game {
     this.cars = [];
     this.bots = [];
     this.player = null;
-    const names = shuffle([...BOT_NAMES]);
+    this.remote.clear();
+    this.snapshots = [];
+    this.inputHistory = [];
+    this.ownOffset.set(0, 0, 0);
+    this.recorder.clear();
     const o = this.opts;
-    const sizes = o.mode === 'training' ? [1, 0] : [o.teamSize, o.teamSize];
-    for (const team of [0, 1]) {
-      for (let i = 0; i < sizes[team]; i++) {
-        const isPlayer = o.mode !== 'attract' && team === 0 && i === 0;
-        const car = new Car(team, isPlayer ? 'Jij' : names.pop(), {
-          isPlayer,
-          body: isPlayer ? o.body : (Math.random() * 3) | 0,
-          paint: isPlayer ? o.paint : null,
-        });
+    this.role = o.role || 'local';
+    const roster = o.roster || Game.defaultRoster(o);
+    const localOwner = o.localOwner || 'local';
+    for (const entry of roster) {
+      {
+        const team = entry.team;
+        const isPlayer = entry.owner != null && entry.owner === localOwner;
+        const name = String(entry.name || 'Speler').replace(/[<>&"'`]/g, '').slice(0, 16) || 'Speler';
+        const car = new Car(team, name, { isPlayer, body: (entry.body | 0) % 3, paint: typeof entry.paint === 'number' ? entry.paint : null });
+        car.owner = entry.owner ?? null;
         car.events = this.carEvents();
         this.cars.push(car);
         if (isPlayer) this.player = car;
-        else this.bots.push(new Bot(car, o.difficulty));
+        else if (car.owner == null && this.role !== 'client') this.bots.push(new Bot(car, o.difficulty));
+        else if (car.owner != null && this.role === 'host') this.remote.set(car.owner, { car, input: emptyControls(), ack: 0, pressSeen: false });
         const view = buildCarMesh(team, car.body, car.paint, this.quality);
         this.scene.add(view.root);
+        if (!this.shadows) {
+          view.blob = buildShadowMesh(2.0);
+          view.blob.scale.set(0.85, 1.25, 1);
+          view.root.add(view.blob);
+          view.blob.position.y = -CAR.RIDE + 0.02;
+        }
         this.views.set(car, view);
         car.renderPos = new THREE.Vector3();
       }
@@ -115,8 +155,28 @@ export class Game {
     this.timeUp = false;
     this.matchOver = false;
     this.fx.clear();
-    this.kickoffReset(o.mode === 'attract' ? 0.01 : 3);
+    if (this.role === 'client') {
+      this.state = 'countdown';
+      this.kickoff = true;
+      this.ball.reset();
+    } else this.kickoffReset(o.mode === 'attract' ? 0.01 : 3);
     this.updateJumbo();
+  }
+
+  static defaultRoster(o) {
+    const names = shuffle([...BOT_NAMES]);
+    const sizes = o.mode === 'training' ? [1, 0] : [o.teamSize, o.teamSize];
+    const roster = [];
+    for (const team of [0, 1]) {
+      for (let i = 0; i < sizes[team]; i++) {
+        const isPlayer = o.mode !== 'attract' && team === 0 && i === 0;
+        roster.push({
+          team, name: isPlayer ? 'Jij' : names.pop(), owner: isPlayer ? 'local' : null,
+          body: isPlayer ? o.body : (Math.random() * 3) | 0, paint: isPlayer ? o.paint : null,
+        });
+      }
+    }
+    return roster;
   }
 
   carEvents() {
@@ -182,23 +242,31 @@ export class Game {
   }
 
   // ---------- main update ----------
+  countdownHud() {
+    const n = Math.ceil(this.countdown);
+    if (this.opts.mode !== 'attract' && n !== this.lastCount && n > 0 && n <= 3) {
+      this.hud.message(String(n), 'count', 0.9);
+      this.audio.countdown(false);
+    }
+    this.lastCount = n;
+  }
+
+  goHud() {
+    if (this.opts.mode === 'attract') return;
+    this.hud.message(this.overtime ? 'VERLENGING!' : 'GO!', 'go', 0.8);
+    this.audio.countdown(true);
+  }
+
   update(dt) {
-    if (this.paused) return;
+    if (this.role === 'client') { this.updateClient(dt); return; }
+    if (this.paused && this.role !== 'host') return;
     const o = this.opts;
     switch (this.state) {
       case 'countdown': {
         this.countdown -= dt;
-        const n = Math.ceil(this.countdown);
-        if (o.mode !== 'attract' && n !== this.lastCount && n > 0 && n <= 3) {
-          this.hud.message(String(n), 'count', 0.9);
-          this.audio.countdown(false);
-        }
-        this.lastCount = n;
+        this.countdownHud();
         if (this.countdown <= 0) {
-          if (o.mode !== 'attract') {
-            this.hud.message(this.overtime ? 'VERLENGING!' : 'GO!', 'go', 0.8);
-            this.audio.countdown(true);
-          }
+          this.goHud();
           this.setState('playing');
         }
         this.readControls(dt);
@@ -248,12 +316,27 @@ export class Game {
       }
     }
     if (this.jumboDirty || this.state === 'playing') this.updateJumbo();
+
+    if (this.role === 'host' && this.net) {
+      this.netTimer -= dt;
+      if (this.netTimer <= 0) {
+        this.netTimer += SNAP_RATE;
+        if (this.netTimer < 0) this.netTimer = SNAP_RATE;
+        this.sendSnapshots();
+      }
+    }
   }
 
   readControls(dt) {
     const frozen = this.state === 'countdown';
     if (this.player) {
       this.input.read(this.player.controls, this.player.onGround);
+    }
+    for (const r of this.remote.values()) {
+      Object.assign(r.car.controls, r.input);
+      // a quick tap that started and ended between two host frames still counts
+      if (r.pressSeen && !r.input.jump && !r.car.prevJump) r.car.controls.jump = true;
+      r.pressSeen = false;
     }
     if (!frozen) {
       assignRoles(this);
@@ -287,7 +370,7 @@ export class Game {
       this.bounceCooldown -= h;
       if (impact > 3 && this.bounceCooldown <= 0) {
         this.bounceCooldown = 0.08;
-        this.audio.bounce(impact, this.nearFactor(this.ball.pos));
+        this.emitFx({ k: 'bounce', s: r3(impact), p: this.ball.pos.toArray().map(r3) });
       }
       for (const car of this.cars) if (!car.demolished) this.carBall(car);
     }
@@ -398,7 +481,7 @@ export class Game {
           vic.groundLock = 0.15;
           vic.onGround = false;
         }
-        if (-vrel > 4) this.audio.hit(-vrel * 0.6, this.nearFactor(a.pos));
+        if (-vrel > 4) this.emitFx({ k: 'bump', s: r3(-vrel), p: a.pos.toArray().map(r3) });
       }
     }
   }
@@ -415,18 +498,11 @@ export class Game {
     vic.demolished = true;
     vic.respawnTimer = 3;
     vic.vel.set(0, 0, 0);
-    this.fx.burst(vic.pos, 90, 14, 0xff8a2a, { life: 1.1, size: 0.9, drag: 2, whiteMix: 0.5, grow: 0.8 });
-    this.fx.burst(vic.pos, 40, 6, 0x333333, { life: 1.6, size: 1.6, drag: 1.5, grow: 1.5, alpha: 0.6 });
-    this.fx.ring(vic.pos, UP, 0xffa040, 6, 0.5);
-    this.audio.demolish();
-    this.rig.shake(vic === this.player || atk === this.player ? 0.6 : 0.15 * this.nearFactor(vic.pos));
     if (atk) {
       atk.stats.demos++;
       atk.stats.points += 25;
-      if (this.opts.mode !== 'attract') this.hud.feed(`<b class="t${atk.team}">${atk.name}</b> 💥 <b class="t${vic.team}">${vic.name}</b>`, atk.team);
-      if (atk === this.player) this.hud.subMessage('DEMOLITIE!', 1.2);
     }
-    if (vic === this.player && navigator.vibrate && this.input.settings.vibrate) navigator.vibrate([30, 40, 60]);
+    this.emitFx({ k: 'demo', v: this.cars.indexOf(vic), c: atk ? this.cars.indexOf(atk) : -1, p: vic.pos.toArray().map(r3) });
   }
 
   respawn(car) {
@@ -451,9 +527,7 @@ export class Game {
           car.boost = Math.min(100, car.boost + (pd.big ? 100 : 12));
           p.active = false;
           p.timer = pd.big ? 10 : 4;
-          if (car === this.player) this.audio.pickup(pd.big);
-          _v.set(pd.x, pd.big ? 1.3 : 0.3, pd.z);
-          this.fx.burst(_v, pd.big ? 40 : 10, pd.big ? 6 : 3, 0x59f3ff, { life: 0.6, size: pd.big ? 0.6 : 0.35, up: true, drag: 2.5 });
+          this.emitFx({ k: 'pad', i, c: this.cars.indexOf(car) });
           break;
         }
       }
@@ -480,12 +554,7 @@ export class Game {
     if (!this.pendingTouch || this.pendingTouch.car !== car) {
       this.pendingTouch = { car, evalAt: now + 0.12, prevThreat: this.threat };
     } else this.pendingTouch.evalAt = now + 0.12;
-    this.ball.lastTeam = car.team;
-    this.audio.hit(strength, this.nearFactor(at));
-    if (strength > 6) {
-      this.fx.burst(at, Math.min(40, 6 + strength), 3 + strength * 0.25, 0xfff2b0, { life: 0.45, size: 0.3, drag: 3, whiteMix: 0.6 });
-    }
-    if (car === this.player && navigator.vibrate && this.input.settings.vibrate && strength > 10) navigator.vibrate(15);
+    this.emitFx({ k: 'touch', c: this.cars.indexOf(car), s: r3(strength), p: at.toArray().map(r3) });
   }
 
   goalThreat(samples) {
@@ -508,13 +577,12 @@ export class Game {
     if (g === 1 - car.team && pt.prevThreat !== 1 - car.team) {
       car.stats.shots++;
       car.stats.points += 20;
-      if (car === this.player) this.hud.subMessage('SCHOT OP DOEL', 1.0);
+      this.emitFx({ k: 'shot', c: this.cars.indexOf(car) });
     }
     if (pt.prevThreat === car.team && g !== car.team) {
       car.stats.saves++;
       car.stats.points += 50;
-      this.hud.feed(`<b class="t${car.team}">${car.name}</b> redt!`, car.team);
-      if (car === this.player) this.hud.message('REDDING!', 'save t' + car.team, 1.2);
+      this.emitFx({ k: 'save', c: this.cars.indexOf(car) });
     }
   }
 
@@ -543,30 +611,15 @@ export class Game {
     this.goalTime = this.time;
     this.goalScorer = scorer;
     this.pendingTouch = null;
-    this.goalExplosion(this.ball.pos, scoringTeam, true);
+    this.goalShock(this.ball.pos);
+    this.emitFx({ k: 'goal', team: scoringTeam, s: this.cars.indexOf(scorer), a: this.cars.indexOf(assist), p: this.ball.pos.toArray().map(r3) });
     this.ball.hidden = true;
     this.goalTimer = 0;
     this.setState('goal');
-    if (this.opts.mode === 'attract') return;
-
-    const ours = this.player ? this.player.team === scoringTeam : true;
-    this.audio.goal(ours);
-    const sub = scorer ? `${scorer === this.player ? 'Jij scoort' : scorer.name + ' scoort'}${assist ? ' • assist ' + assist.name : ''}` : 'Eigen doelpunt!';
-    this.hud.message('GOAL!', 'goal t' + scoringTeam, 2.8, sub);
-    this.hud.feed(scorer ? `⚽ <b class="t${scoringTeam}">${scorer.name}</b>${assist ? ` <small>(${assist.name})</small>` : ''}` : `⚽ eigen goal`, scoringTeam);
-    if (navigator.vibrate && this.input.settings.vibrate) navigator.vibrate(ours ? [40, 60, 120] : 60);
     if (this.overtime) this.matchOver = true;
   }
 
-  goalExplosion(pos, team, physical) {
-    const tc = TEAM_COLORS[team];
-    this.fx.burst(pos, 220, 26, tc.glow, { life: 1.6, size: 1.0, drag: 1.6, whiteMix: 0.7, grow: 0.5 });
-    this.fx.burst(pos, 80, 10, 0xffffff, { life: 1.0, size: 1.4, drag: 2.5, grow: 2 });
-    this.fx.ring(pos, _v.set(0, 0, 1), tc.glow, 18, 0.9);
-    this.fx.ring(pos, UP, 0xffffff, 12, 0.7);
-    this.rig.shake(1.1);
-    if (this.arena.crowdMat) this.arena.crowdMat.uniforms.excite.value = 1.0;
-    if (!physical) return;
+  goalShock(pos) {
     for (const car of this.cars) {
       if (car.demolished) continue;
       _v.copy(car.pos).sub(pos);
@@ -579,6 +632,16 @@ export class Game {
         car.onGround = false;
       }
     }
+  }
+
+  goalExplosion(pos, team, physical) {
+    const tc = TEAM_COLORS[team];
+    this.fx.burst(pos, 220, 26, tc.glow, { life: 1.6, size: 1.0, drag: 1.6, whiteMix: 0.7, grow: 0.5 });
+    this.fx.burst(pos, 80, 10, 0xffffff, { life: 1.0, size: 1.4, drag: 2.5, grow: 2 });
+    this.fx.ring(pos, _v.set(0, 0, 1), tc.glow, 18, 0.9);
+    this.fx.ring(pos, UP, 0xffffff, 12, 0.7);
+    this.rig.shake(1.1);
+    if (this.arena.crowdMat) this.arena.crowdMat.uniforms.excite.value = 1.0;
   }
 
   afterGoal() {
@@ -615,15 +678,15 @@ export class Game {
       if (this.timeLeft <= 0) {
         this.timeLeft = 0;
         this.timeUp = true;
-        this.hud.subMessage('Laatste aanraking telt… bal moet de grond raken', 2.5);
+        this.emitFx({ k: 'timeup' });
       }
     }
     if (this.timeUp && !this.overtime && this.ball.touchedGround) {
-      this.audio.whistle();
       if (this.score[0] === this.score[1]) {
+        this.emitFx({ k: 'whistle' });
         this.overtime = true;
         this.timeLeft = 0;
-        this.hud.message('VERLENGING', 'overtime', 2);
+        this.emitFx({ k: 'msg', t: 'VERLENGING', cls: 'overtime', d: 2 });
         this.kickoffReset(3);
       } else this.endMatch();
     }
@@ -632,15 +695,14 @@ export class Game {
   endMatch() {
     this.matchOver = true;
     this.setState('ended');
-    this.audio.whistle();
-    if (this.onEnd) this.onEnd(this.results());
+    this.emitFx({ k: 'end', r: this.results() });
   }
 
   results() {
     return {
       score: [...this.score],
       playerTeam: this.player ? this.player.team : 0,
-      cars: this.cars.map(c => ({ name: c.name, team: c.team, isPlayer: c.isPlayer, ...c.stats })),
+      cars: this.cars.map(c => ({ name: c.name, team: c.team, owner: c.owner, isPlayer: c.isPlayer, ...c.stats })),
     };
   }
 
@@ -662,6 +724,253 @@ export class Game {
     return Math.max(0.15, Math.min(1, 1.2 - d / 60));
   }
 
+  // ---------- effects (local + broadcast when hosting) ----------
+  emitFx(e) {
+    this.applyFx(e);
+    if (this.role === 'host' && this.net) this.net.broadcast({ t: 'e', e });
+  }
+
+  applyFx(e) {
+    const car = e.c !== undefined && e.c >= 0 ? this.cars[e.c] : null;
+    const pos = e.p ? _pre.fromArray(e.p) : null;
+    const show = this.opts.mode !== 'attract';
+    const vib = (pattern) => { if (navigator.vibrate && this.input.settings.vibrate) navigator.vibrate(pattern); };
+    switch (e.k) {
+      case 'bounce': this.audio.bounce(e.s, this.nearFactor(pos)); break;
+      case 'bump': this.audio.hit(e.s * 0.6, this.nearFactor(pos)); break;
+      case 'touch': {
+        if (!car) break;
+        this.ball.lastTeam = car.team;
+        this.ball.lastHit = this.time;
+        this.ball.lastHitStrength = e.s;
+        this.audio.hit(e.s, this.nearFactor(pos));
+        if (e.s > 6) this.fx.burst(pos, Math.min(40, 6 + e.s), 3 + e.s * 0.25, 0xfff2b0, { life: 0.45, size: 0.3, drag: 3, whiteMix: 0.6 });
+        if (car === this.player && e.s > 10) vib(15);
+        break;
+      }
+      case 'pad': {
+        const pd = BOOST_PADS[e.i];
+        if (car === this.player) this.audio.pickup(pd.big);
+        _v.set(pd.x, pd.big ? 1.3 : 0.3, pd.z);
+        this.fx.burst(_v, pd.big ? 40 : 10, pd.big ? 6 : 3, 0x59f3ff, { life: 0.6, size: pd.big ? 0.6 : 0.35, up: true, drag: 2.5 });
+        if (this.role === 'client' && this.pads[e.i]) this.pads[e.i].active = false;
+        break;
+      }
+      case 'demo': {
+        const vic = this.cars[e.v];
+        this.fx.burst(pos, 90, 14, 0xff8a2a, { life: 1.1, size: 0.9, drag: 2, whiteMix: 0.5, grow: 0.8 });
+        this.fx.burst(pos, 40, 6, 0x333333, { life: 1.6, size: 1.6, drag: 1.5, grow: 1.5, alpha: 0.6 });
+        this.fx.ring(pos, UP, 0xffa040, 6, 0.5);
+        this.audio.demolish();
+        this.rig.shake(vic === this.player || car === this.player ? 0.6 : 0.15 * this.nearFactor(pos));
+        if (car && show) this.hud.feed(`<b class="t${car.team}">${car.name}</b> 💥 <b class="t${vic.team}">${vic.name}</b>`, car.team);
+        if (car && car === this.player) this.hud.subMessage('DEMOLITIE!', 1.2);
+        if (vic === this.player) vib([30, 40, 60]);
+        break;
+      }
+      case 'shot': if (car === this.player) this.hud.subMessage('SCHOT OP DOEL', 1.0); break;
+      case 'save':
+        if (!car) break;
+        this.hud.feed(`<b class="t${car.team}">${car.name}</b> redt!`, car.team);
+        if (car === this.player) this.hud.message('REDDING!', 'save t' + car.team, 1.2);
+        break;
+      case 'goal': {
+        const team = e.team;
+        const scorer = e.s >= 0 ? this.cars[e.s] : null;
+        const assist = e.a >= 0 ? this.cars[e.a] : null;
+        this.goalExplosion(pos, team, false);
+        if (this.role === 'client') { this.ball.hidden = true; this.goalScorer = scorer; this.lastGoalTeam = team; }
+        if (!show) break;
+        const ours = this.player ? this.player.team === team : true;
+        this.audio.goal(ours);
+        const sub = scorer ? `${scorer === this.player ? 'Jij scoort' : scorer.name + ' scoort'}${assist ? ' • assist ' + assist.name : ''}` : 'Eigen doelpunt!';
+        this.hud.message('GOAL!', 'goal t' + team, 2.8, sub);
+        this.hud.feed(scorer ? `⚽ <b class="t${team}">${scorer.name}</b>${assist ? ` <small>(${assist.name})</small>` : ''}` : `⚽ eigen goal`, team);
+        vib(ours ? [40, 60, 120] : 60);
+        break;
+      }
+      case 'timeup': this.hud.subMessage('Laatste aanraking telt… bal moet de grond raken', 2.5); break;
+      case 'whistle': this.audio.whistle(); break;
+      case 'msg': this.hud.message(e.t, e.cls || '', e.d || 1.5); break;
+      case 'end': {
+        this.audio.whistle();
+        const res = e.r;
+        if (this.role === 'client') {
+          res.cars.forEach(c => { c.isPlayer = c.owner != null && c.owner === this.opts.localOwner; });
+          res.playerTeam = this.player ? this.player.team : 0;
+          this.matchOver = true;
+          this.setState('ended');
+        }
+        if (this.onEnd) this.onEnd(res);
+        break;
+      }
+      default: break;
+    }
+  }
+
+  // ---------- networking: host ----------
+  sendSnapshots() {
+    const b = this.ball;
+    const base = {
+      t: 's', tm: r3(this.time), st: this.state, cd: r3(this.countdown || 0), tl: r3(this.timeLeft || 0),
+      ot: this.overtime ? 1 : 0, tu: this.timeUp ? 1 : 0, sc: this.score, ko: this.kickoff ? 1 : 0,
+      rt: r3(this.replayT || 0), re: r3(this.replayEnd || 0), gt: r3(this.goalTime || 0),
+      gs: this.goalScorer ? this.cars.indexOf(this.goalScorer) : -1, gT: this.lastGoalTeam ?? 0,
+      b: [...b.pos.toArray().map(r3), r3(b.quat.x), r3(b.quat.y), r3(b.quat.z), r3(b.quat.w), ...b.vel.toArray().map(r3), b.hidden ? 1 : 0],
+      c: this.cars.map(c => c.netState()),
+      p: this.pads.map(p => (p.active ? 1 : 0)).join(''),
+    };
+    for (const [id, r] of this.remote) {
+      if (!this.net.conns.has(id)) continue;
+      base.a = r.ack;
+      this.net.send(id, base);
+    }
+  }
+
+  receiveInput(id, msg) {
+    const r = this.remote.get(id);
+    if (!r) return;
+    if (msg.s <= r.ack) return;
+    r.ack = msg.s;
+    unpackControls(msg.c, r.input);
+    if (r.input.jump) r.pressSeen = true;
+  }
+
+  // a guest left: let a bot take over the car
+  dropRemote(id) {
+    const r = this.remote.get(id);
+    if (!r) return;
+    this.remote.delete(id);
+    r.car.owner = null;
+    r.car.name += ' (bot)';
+    this.bots.push(new Bot(r.car, this.opts.difficulty));
+    this.hud.clearLabels();
+  }
+
+  // ---------- networking: guest ----------
+  receiveSnapshot(s) {
+    s.recv = performance.now();
+    this.snapshots.push(s);
+    if (this.snapshots.length > 40) this.snapshots.shift();
+    const p = this.player;
+    if (!p) return;
+    const idx = this.cars.indexOf(p);
+    const predicting = (s.st === 'playing' || s.st === 'goal');
+    _pre.copy(p.pos);
+    p.applyNetState(s.c[idx]);
+    this.inputHistory = this.inputHistory.filter(h => h.seq > s.a);
+    if (predicting && !p.demolished) {
+      // replay inputs the host has not processed yet
+      const saved = { ...p.controls };
+      const ev = p.events;
+      p.events = null;
+      let acc = 0;
+      for (const h of this.inputHistory) {
+        Object.assign(p.controls, h.c);
+        acc += h.dt;
+        while (acc >= PHYS_STEP) { p.step(PHYS_STEP, this.time); acc -= PHYS_STEP; }
+      }
+      p.events = ev;
+      Object.assign(p.controls, saved);
+    }
+    _pre.sub(p.pos);
+    this.ownOffset.add(_pre);
+    if (this.ownOffset.lengthSq() > 9) this.ownOffset.set(0, 0, 0);
+  }
+
+  updateClient(dt) {
+    const snaps = this.snapshots;
+    if (!snaps.length) return;
+    const latest = snaps[snaps.length - 1];
+    const now = performance.now();
+    // clock: render other objects a little in the past for smooth interpolation
+    const target = latest.tm + (now - latest.recv) / 1000 - NET_DELAY;
+    this.netTime += dt;
+    const err = target - this.netTime;
+    if (Math.abs(err) > 0.3) this.netTime = target;
+    else this.netTime += err * Math.min(1, dt * 3);
+    this.time = this.netTime;
+
+    // match state from the host
+    const prev = this.state;
+    if (latest.st !== prev) {
+      if (latest.st === 'replay') { this.replayBoom = false; this.fx.clear(); this.rig.snap(); }
+      if (latest.st === 'countdown') { this.rig.snap(); this.lastCount = 4; this.inputHistory = []; this.input.reset(); }
+      if (latest.st === 'playing' && prev === 'countdown') this.goHud();
+      if (latest.st !== 'ended') this.setState(latest.st);
+    }
+    if (this.score[0] !== latest.sc[0] || this.score[1] !== latest.sc[1]) this.jumboDirty = true;
+    this.score = [...latest.sc];
+    this.timeLeft = latest.tl;
+    this.overtime = !!latest.ot;
+    this.timeUp = !!latest.tu;
+    this.kickoff = !!latest.ko;
+    this.goalTime = latest.gt;
+    this.replayEnd = latest.re;
+    this.lastGoalTeam = latest.gT;
+    this.goalScorer = latest.gs >= 0 ? this.cars[latest.gs] : null;
+    if (this.state === 'countdown') {
+      this.countdown = Math.max(0, latest.cd - (now - latest.recv) / 1000);
+      this.countdownHud();
+    }
+    if (this.state === 'replay') {
+      this.replayT = latest.rt + (now - latest.recv) / 1000 * 0.8;
+      if (!this.replayBoom && this.replayT >= this.goalTime) {
+        this.replayBoom = true;
+        this.goalExplosion(this.replayProxies.ball.pos, this.lastGoalTeam, false);
+      }
+    }
+    for (let i = 0; i < this.pads.length; i++) this.pads[i].active = latest.p[i] === '1';
+
+    // interpolate everything except our own car
+    let a = snaps[0], b = snaps[0];
+    for (let i = 0; i < snaps.length; i++) {
+      if (snaps[i].tm <= this.netTime) a = snaps[i];
+      if (snaps[i].tm >= this.netTime) { b = snaps[i]; break; }
+      b = snaps[i];
+    }
+    const span = b.tm - a.tm;
+    const k = span > 1e-4 ? Math.min(1, Math.max(0, (this.netTime - a.tm) / span)) : 1;
+    this.cars.forEach((car, i) => {
+      if (car === this.player) return;
+      car.applyNetState(a.c[i]);
+      const B = b.c[i];
+      car.pos.lerp(_v.set(B[0], B[1], B[2]), k);
+      car.quat.slerp(_q2.set(B[3], B[4], B[5], B[6]).normalize(), k);
+      car.vel.lerp(_v.set(B[7], B[8], B[9]), k);
+      car.controls.steer = car.netSteer;
+      if (car.onGround) car.wheelSpin += car.vel.dot(car.forward(_w)) * dt / 0.18;
+    });
+    const ball = this.ball;
+    const A = a.b, Bb = b.b;
+    ball.pos.set(A[0], A[1], A[2]).lerp(_v.set(Bb[0], Bb[1], Bb[2]), k);
+    ball.quat.set(A[3], A[4], A[5], A[6]).normalize().slerp(_q2.set(Bb[3], Bb[4], Bb[5], Bb[6]).normalize(), k);
+    ball.vel.set(A[7], A[8], A[9]).lerp(_v.set(Bb[7], Bb[8], Bb[9]), k);
+    ball.hidden = (k < 0.5 ? A[10] : Bb[10]) === 1;
+
+    // our own car: read input, send it, and predict locally
+    const p = this.player;
+    if (p) {
+      this.input.read(p.controls, p.onGround);
+      this.inputSeq++;
+      const c = packControls(p.controls);
+      if (this.net) this.net.send('host', { t: 'i', s: this.inputSeq, c });
+      const predicting = (this.state === 'playing' || this.state === 'goal') && !p.demolished;
+      if (predicting) {
+        this.inputHistory.push({ seq: this.inputSeq, dt, c: { ...p.controls } });
+        if (this.inputHistory.length > 240) this.inputHistory.shift();
+        this.ownAcc += Math.min(dt, 0.1);
+        while (this.ownAcc >= PHYS_STEP) { p.step(PHYS_STEP, this.time); this.ownAcc -= PHYS_STEP; }
+      } else {
+        this.ownAcc = 0;
+      }
+    }
+    this.ownOffset.multiplyScalar(Math.exp(-10 * dt));
+
+    if (this.state === 'playing' || this.state === 'goal') this.recorder.record(this.netTime, this.ball, this.cars);
+    if (this.jumboDirty || this.state === 'playing') this.updateJumbo();
+  }
+
   // ---------- views ----------
   render(dt, time) {
     const replay = this.state === 'replay';
@@ -677,11 +986,15 @@ export class Game {
     this.ballShadow.position.set(b.pos.x, 0.03, b.pos.z);
     const ss = 1 + b.pos.y * 0.05;
     this.ballShadow.scale.set(ss, ss, ss);
-    this.ballShadow.material.opacity = Math.max(0.15, 1 - b.pos.y / 22);
+    this.ballShadow.material.opacity = Math.max(0.15, 1 - b.pos.y / 22) * (this.shadows ? 0.35 : 1);
+    const sinceHit = this.time - (this.ball.lastHit ?? -10);
+    const flash = replay ? 0 : Math.max(0, 1 - sinceHit * 3) * Math.min(1, (this.ball.lastHitStrength || 0) / 15);
+    this.ballView.halo.material.opacity = flash * 0.9;
+    this.ballView.mat.emissiveIntensity = 1 + flash * 6;
     if (!replay && !b.hidden && this.ball.vel.lengthSq() > 600) {
       const tc = this.ball.lastTeam !== undefined ? TEAM_COLORS[this.ball.lastTeam].glow : 0xffffff;
-      _c.set(tc);
-      this.fx.spawn(b.pos.x, b.pos.y, b.pos.z, 0, 0, 0, 0.35, 1.3, _c.r, _c.g, _c.b, 0.35, { grow: -2 });
+      _col.set(tc);
+      this.fx.spawn(b.pos.x, b.pos.y, b.pos.z, 0, 0, 0, 0.35, 1.3, _col.r, _col.g, _col.b, 0.35, { grow: -2 });
     }
 
     // cars
@@ -691,8 +1004,9 @@ export class Game {
       view.root.visible = !src.demolished;
       if (src.demolished) return;
       view.root.position.copy(src.pos);
+      if (!replay && car === this.player && this.role === 'client') view.root.position.add(this.ownOffset);
       view.root.quaternion.copy(src.quat);
-      car.renderPos.copy(src.pos);
+      car.renderPos.copy(view.root.position);
       // wheels
       const steer = replay ? 0 : car.controls.steer;
       car.steerVis += (steer - car.steerVis) * Math.min(1, 12 * dt);
@@ -701,6 +1015,7 @@ export class Game {
         if (w.front) w.pivot.rotation.y = -car.steerVis * 0.45;
       }
       view.glow.visible = replay ? true : car.onGround;
+      if (view.blob) view.blob.visible = replay ? true : car.onGround;
       // boost flames + trail
       const boosting = src.boosting;
       view.flames.visible = boosting;

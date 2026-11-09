@@ -64,6 +64,8 @@ export class Particles {
   }
 
   spawn(x, y, z, vx, vy, vz, life, size, r, g, b, a = 1, opts) {
+    // never let invalid values reach the GPU (NaN would blank the bloom pass)
+    if (!(Number.isFinite(x + y + z + vx + vy + vz + life + size + r + g + b + a)) || life <= 0) return;
     const i = this.next;
     this.next = (this.next + 1) % this.max;
     this.pos[i * 3] = x; this.pos[i * 3 + 1] = y; this.pos[i * 3 + 2] = z;
