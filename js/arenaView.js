@@ -1,5 +1,5 @@
 // Visual construction of the stadium. Geometry follows the collision SDF.
-import * as THREE from 'three';
+import * as THREE from '../vendor/three.module.min.js';
 import { ARENA, TEAM_COLORS, BOOST_PADS } from './config.js';
 
 const { W, L, H, RC, RW, GW, GH, GD } = ARENA;
@@ -503,19 +503,19 @@ export function buildArena(scene, renderer, quality) {
   jumboTex.colorSpace = THREE.SRGBColorSpace;
   const jumboMat = new THREE.MeshBasicMaterial({ map: jumboTex });
   const jumbo = new THREE.Group();
-  const jFrame = new THREE.Mesh(new THREE.BoxGeometry(14.4, 5.6, 14.4), new THREE.MeshStandardMaterial({ color: 0x15171d, metalness: 0.6, roughness: 0.4 }));
+  const jFrame = new THREE.Mesh(new THREE.BoxGeometry(10.4, 4.2, 10.4), new THREE.MeshStandardMaterial({ color: 0x15171d, metalness: 0.6, roughness: 0.4 }));
   jumbo.add(jFrame);
   for (let i = 0; i < 4; i++) {
-    const s = new THREE.Mesh(new THREE.PlaneGeometry(13.6, 5.1), jumboMat);
+    const s = new THREE.Mesh(new THREE.PlaneGeometry(9.8, 3.7), jumboMat);
     const a = i * Math.PI / 2;
-    s.position.set(Math.sin(a) * 7.22, 0, Math.cos(a) * 7.22);
+    s.position.set(Math.sin(a) * 5.22, 0, Math.cos(a) * 5.22);
     s.rotation.y = a;
     jumbo.add(s);
   }
-  jumbo.position.set(0, H + 9, 0);
+  jumbo.position.set(0, H + 16, 0);
   group.add(jumbo);
   const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 30, 6), poleMat);
-  cable.position.set(0, H + 9 + 17, 0);
+  cable.position.set(0, H + 16 + 17, 0);
   group.add(cable);
 
   function drawJumbo(blueScore, redScore, timeText) {

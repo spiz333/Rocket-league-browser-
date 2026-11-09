@@ -1,5 +1,5 @@
 // In-match HUD (DOM based): scoreboard, clock, boost, messages, name tags.
-import * as THREE from 'three';
+import * as THREE from '../vendor/three.module.min.js';
 import { TEAM_COLORS } from './config.js';
 
 const $ = (id) => document.getElementById(id);

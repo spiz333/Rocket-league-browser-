@@ -25,11 +25,11 @@ export const BALL = {
 
 export const CAR = {
   HX: 0.42,          // hitbox half extents (x = width, y = height, z = length)
-  HY: 0.19,
+  HY: 0.22,
   HZ: 0.62,
   OFFSET_Z: 0.06,    // hitbox is shifted slightly forward
   MASS: 180,
-  RIDE: 0.36,        // center height above the surface when driving
+  RIDE: 0.38,        // center height above the surface when driving
   MAX_THROTTLE_SPEED: 14.1,
   MAX_SPEED: 23,
   SUPERSONIC: 21.5,

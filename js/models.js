@@ -1,5 +1,5 @@
 // Procedural meshes for cars and the ball (all original designs).
-import * as THREE from 'three';
+import * as THREE from '../vendor/three.module.min.js';
 import { BALL, TEAM_COLORS } from './config.js';
 
 export const BODY_TYPES = [
@@ -104,8 +104,8 @@ export function buildCarMesh(team, bodyIndex = 0, paint = null, quality = 'high'
   const root = new THREE.Group();
   const model = new THREE.Group();
   root.add(model);
-  // physics center sits 0.36 above the surface; model origin at physics center
-  model.position.y = 0.02;
+  // model origin = physics center (CAR.RIDE above the surface)
+  model.position.y = 0.0; // wheels touch the surface at -CAR.RIDE
 
   const bodyColor = paint != null ? paint : tc.main;
   const bodyMat = new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.32, metalness: 0.55 });
@@ -224,7 +224,7 @@ export function buildCarMesh(team, bodyIndex = 0, paint = null, quality = 'high'
   });
   const glow = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 2.2), glowMat);
   glow.rotation.x = -Math.PI / 2;
-  glow.position.y = -0.33;
+  glow.position.y = -0.35;
   model.add(glow);
 
   root.traverse(o => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });

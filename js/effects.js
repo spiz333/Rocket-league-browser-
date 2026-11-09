@@ -1,5 +1,5 @@
 // Pooled additive particle system + shockwave rings.
-import * as THREE from 'three';
+import * as THREE from '../vendor/three.module.min.js';
 
 export class Particles {
   constructor(scene, max = 2000) {

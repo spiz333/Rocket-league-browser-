@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from '../vendor/three.module.min.js';
 import { CAR, GRAVITY } from './config.js';
 import { sdf, sdfNormal } from './sdf.js';
 
@@ -243,7 +243,7 @@ export class Car {
         _w.set(this.dodgeF * rate, _w.y * 0.9, this.dodgeS * rate);
         if (this.dodging <= 0) _w.multiplyScalar(0.25);
       } else {
-        const roll = c.drift ? c.yaw : c.roll;
+        const roll = c.roll !== 0 ? c.roll : (c.drift ? c.yaw : 0);
         const yaw = c.drift ? 0 : c.yaw;
         const resp = Math.min(1, 9 * dt);
         const damp = Math.min(1, 3.2 * dt);

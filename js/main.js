@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from '../vendor/three.module.min.js';
 import { buildArena, BoostPadsView } from './arenaView.js';
 import { Particles } from './effects.js';
 import { Audio } from './audio.js';
@@ -205,7 +205,7 @@ function refreshPreview() {
   if (preview) scene.remove(preview.root);
   const paint = PAINTS[settings.paint] ? PAINTS[settings.paint].color : null;
   preview = buildCarMesh(0, settings.body, paint, quality);
-  preview.root.position.set(0, 0.36, 0);
+  preview.root.position.set(0, 0.38, 0);
   preview.root.scale.setScalar(1);
   scene.add(preview.root);
 }
@@ -317,6 +317,7 @@ function showEnd(res) {
 
 game.onStateChange = (s) => {
   document.body.classList.toggle('replay', s === 'replay');
+  if (s === 'replay') hud.clearMessage();
 };
 
 $('btn-pause').addEventListener('click', () => { audio.click(); pause(); });

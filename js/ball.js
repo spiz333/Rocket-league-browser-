@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from '../vendor/three.module.min.js';
 import { BALL, GRAVITY } from './config.js';
 import { sdf, sdfNormal } from './sdf.js';
 

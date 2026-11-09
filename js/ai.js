@@ -1,5 +1,5 @@
 // Rule-based bots: rotation roles, intercepts, dodges and (on hard) aerials.
-import * as THREE from 'three';
+import * as THREE from '../vendor/three.module.min.js';
 import { ARENA, BALL, CAR, GRAVITY, DIFFICULTY, BOOST_PADS } from './config.js';
 
 const { L, W, GW } = ARENA;

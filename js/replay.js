@@ -1,5 +1,5 @@
 // Ring buffer of transforms for instant goal replays.
-import * as THREE from 'three';
+import * as THREE from '../vendor/three.module.min.js';
 const STRIDE_BALL = 8;
 const STRIDE_CAR = 9;
 

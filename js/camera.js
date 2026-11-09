@@ -1,5 +1,5 @@
 // Chase camera with ball-cam, plus cinematic modes for menus and replays.
-import * as THREE from 'three';
+import * as THREE from '../vendor/three.module.min.js';
 import { sdf, sdfNormal } from './sdf.js';
 
 const _d = new THREE.Vector3();
@@ -58,6 +58,17 @@ export class CameraRig {
 
     _p.copy(carPos).addScaledVector(this.flatDir, -this.distance);
     _p.y = carPos.y + this.height;
+    // walls between car and camera: pull the camera in (and up) along the line
+    const sx = carPos.x, sy = carPos.y + 0.6, sz = carPos.z;
+    let tMax = 1;
+    for (let i = 1; i <= 10; i++) {
+      const t = i / 10;
+      if (sdf(sx + (_p.x - sx) * t, sy + (_p.y - sy) * t, sz + (_p.z - sz) * t) < 0.45) { tMax = (i - 1) / 10; break; }
+    }
+    if (tMax < 1) {
+      _p.set(sx + (_p.x - sx) * tMax, sy + (_p.y - sy) * tMax, sz + (_p.z - sz) * tMax);
+      _p.y += (1 - tMax) * 1.6;
+    }
     // keep inside the arena
     const s = sdf(_p.x, _p.y, _p.z);
     if (s < 0.6) {

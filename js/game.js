@@ -1,5 +1,5 @@
 // Match orchestration: physics stepping, rules, scoring, effects and views.
-import * as THREE from 'three';
+import * as THREE from '../vendor/three.module.min.js';
 import { ARENA, BALL, CAR, BOOST_PADS, KICKOFF_SPOTS, KICKOFF_SETS, BOT_NAMES, TEAM_COLORS, PHYS_STEP } from './config.js';
 import { Ball, stepBall, BallPredictor } from './ball.js';
 import { Car } from './car.js';
@@ -323,6 +323,8 @@ export class Game {
     _n.set(dx, dy, dz).applyQuaternion(car.quat);
     _c.set(cx, cy, cz + CAR.OFFSET_Z).applyQuaternion(car.quat).add(car.pos);
     ball.pos.copy(_c).addScaledVector(_n, BALL.R + 0.001);
+    // keep ground shots a little flatter (more fun, more goals)
+    if (car.onGround && car.normal.y > 0.8 && _n.y > 0) { _n.y *= 0.7; _n.normalize(); }
 
     // relative velocity at contact
     _v.copy(_c).sub(car.pos);

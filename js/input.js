@@ -210,7 +210,7 @@ export class Input {
       if (Math.abs(trig) > 0.05) throttle = trig;
       if (b(0)) jump = true;
       if (b(1)) boost = true;
-      if (b(2) || b(4) || b(5)) drift = true;
+      if (b(2)) drift = true;
       if (b(4)) roll = -1;
       if (b(5)) roll = 1;
       if (b(3) && !this.prevPad[3]) this.emit('ballcam');
