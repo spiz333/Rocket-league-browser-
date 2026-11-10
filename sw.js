@@ -1,11 +1,11 @@
 // Network-first service worker so the game also works offline after the first visit.
-const CACHE = 'nitro-strikers-v3';
+const CACHE = 'nitro-strikers-v4';
 const CORE = [
   './', './index.html', './css/style.css', './manifest.webmanifest',
   './vendor/three.module.min.js',
   './js/main.js', './js/game.js', './js/config.js', './js/sdf.js', './js/ball.js', './js/car.js',
   './js/ai.js', './js/camera.js', './js/arenaView.js', './js/models.js', './js/effects.js',
-  './js/audio.js', './js/input.js', './js/hud.js', './js/replay.js', './js/net.js', './js/maps.js', './js/scenery.js',
+  './js/audio.js', './js/input.js', './js/hud.js', './js/replay.js', './js/net.js', './js/maps.js', './js/scenery.js', './js/textures.js',
   './vendor/peerjs.min.js',
   './vendor/postprocessing/EffectComposer.js', './vendor/postprocessing/RenderPass.js',
   './vendor/postprocessing/UnrealBloomPass.js', './vendor/postprocessing/OutputPass.js',

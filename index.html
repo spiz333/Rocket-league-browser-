@@ -212,17 +212,29 @@
             <div class="seg" data-opt="btnSize"><button data-val="small">S</button><button data-val="normal">M</button><button data-val="large">L</button></div></div>
           <div class="opt-row"><span class="opt-label">Air pitch</span>
             <div class="seg" data-opt="invertPitch"><button data-val="0">Normal</button><button data-val="1">Inverted</button></div></div>
+          <div class="opt-row"><span class="opt-label">Stick flips</span>
+            <div class="seg" data-opt="stickFlip"><button data-val="0">Swipe only</button><button data-val="1">Stick + tap</button></div></div>
           <div class="opt-row"><span class="opt-label">Assists</span>
             <div class="seg" data-opt="assist"><button data-val="1">On</button><button data-val="0">Off</button></div></div>
           <div class="opt-row"><span class="opt-label">Vibration</span>
             <div class="seg" data-opt="vibrate"><button data-val="1">On</button><button data-val="0">Off</button></div></div>
         </div>
         <div class="set-card">
+          <h3>Camera</h3>
+          <div class="opt-row"><span class="opt-label">Field of view</span><input type="range" min="70" max="110" step="1" data-range="camFov"><output data-out="camFov"></output></div>
+          <div class="opt-row"><span class="opt-label">Distance</span><input type="range" min="3" max="7" step="0.1" data-range="camDist"><output data-out="camDist"></output></div>
+          <div class="opt-row"><span class="opt-label">Height</span><input type="range" min="0.8" max="2.8" step="0.05" data-range="camHeight"><output data-out="camHeight"></output></div>
+          <div class="opt-row"><span class="opt-label">Angle</span><input type="range" min="-12" max="6" step="1" data-range="camAngle"><output data-out="camAngle"></output></div>
+          <div class="opt-row"><span class="opt-label">Stiffness</span><input type="range" min="0" max="100" step="5" data-range="camStiff"><output data-out="camStiff"></output></div>
+          <div class="opt-row"><span class="opt-label">Swivel speed</span><input type="range" min="2" max="10" step="0.5" data-range="camSwivel"><output data-out="camSwivel"></output></div>
+          <div class="opt-row"><span class="opt-label">Camera shake</span>
+            <div class="seg" data-opt="camShake"><button data-val="1">On</button><button data-val="0">Off</button></div></div>
+          <button class="chip" data-action="cam-reset">RESET CAMERA</button>
+        </div>
+        <div class="set-card">
           <h3>Video</h3>
           <div class="opt-row"><span class="opt-label">Graphics</span>
             <div class="seg" data-opt="quality"><button data-val="low">Fast</button><button data-val="medium">Nice</button><button data-val="high">Ultra</button></div></div>
-          <div class="opt-row"><span class="opt-label">Camera</span>
-            <div class="seg" data-opt="camDist"><button data-val="4">Close</button><button data-val="4.6">Normal</button><button data-val="5.4">Far</button></div></div>
           <div class="opt-row"><span class="opt-label">Replays</span>
             <div class="seg" data-opt="replays"><button data-val="1">On</button><button data-val="0">Off</button></div></div>
           <div class="opt-row"><span class="opt-label">Minimap</span>

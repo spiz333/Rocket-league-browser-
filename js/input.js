@@ -24,7 +24,7 @@ export class Input {
     this.stickRadius = 58;
     this.mouseBoost = false;
     this.listeners = {};
-    this.settings = { autoGas: true, invertPitch: false, vibrate: true, steerCurve: 1.3 };
+    this.settings = { autoGas: true, invertPitch: false, vibrate: true, steerCurve: 1.3, stickFlip: false };
     this.flipQueue = null;
     this.lastOnGround = true;
     this.lastJumpOut = false;
@@ -207,9 +207,11 @@ export class Input {
     const now = performance.now();
     for (const t of this.rightTouches.values()) {
       if (t.lock === 'jump') {
-        if (t.swiped || this.lastOnGround || this.lastJumpOut || now - t.down > 100) touchJump = true;
+        if (t.swiped || this.lastOnGround || this.lastJumpOut || now - t.down > 90) touchJump = true;
       } else if (this._hitCached(t)) touchJump = true;
     }
+    // a tap on the JUMP button is a plain (double) jump; stick-direction flips are for pads/keyboards
+    let noDodge = touchJump && !this.settings.stickFlip;
     let jump = touchJump || k.has('Space') || k.has('KeyJ');
     let boost = this.pressed.boost || k.has('ShiftLeft') || k.has('ShiftRight') || k.has('KeyK') || this.mouseBoost;
     let drift = this.pressed.drift || k.has('ControlLeft') || k.has('KeyL') || k.has('MouseRight');
@@ -266,7 +268,7 @@ export class Input {
       const ph = q.seq[q.i++];
       if (ph === 0) jump = false;
       else if (ph === 1) jump = true;
-      else { jump = true; fwd = q.f; steer = q.s; }
+      else { jump = true; fwd = q.f; steer = q.s; noDodge = false; }
       if (q.i >= q.seq.length) this.flipQueue = null;
     }
 
@@ -279,6 +281,7 @@ export class Input {
     c.steer = steer;
     c.pitch = pitch;
     c.fwd = fwd;
+    c.noDodge = noDodge;
     c.yaw = steer;
     c.roll = roll;
     c.jump = jump;

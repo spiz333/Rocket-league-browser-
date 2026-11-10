@@ -10,6 +10,9 @@ const _l = new THREE.Vector3();
 const _n = new THREE.Vector3();
 const _f = new THREE.Vector3();
 const _o = new THREE.Vector3();
+const UP = new THREE.Vector3(0, 1, 0);
+const _t1 = new THREE.Vector3();
+const _t2 = new THREE.Vector3();
 
 function yawOf(v) { return Math.atan2(v.x, v.z); }
 function wrap(a) { while (a > Math.PI) a -= Math.PI * 2; while (a < -Math.PI) a += Math.PI * 2; return a; }
@@ -31,6 +34,11 @@ export class CameraRig {
     this.yaw = 0;
     this.pitch = 0.0;
     this.offset = new THREE.Vector3(0, 2, -4);
+    this.push = new THREE.Vector3();
+    this.wallBlend = 0;
+    this.angle = -3;       // extra tilt in car cam (degrees)
+    this.stiffness = 0.5;  // 0 = loose, 1 = locked to the car
+    this.swivel = 4.5;     // max turn speed of the camera (rad/s)
     this.lookOffset = new THREE.Vector3(0, 1, 6);
     this._snap = true;
   }
@@ -45,56 +53,78 @@ export class CameraRig {
     this.camera.updateProjectionMatrix();
   }
 
-  shake(a) { this.shakeAmt = Math.max(this.shakeAmt, a); }
+  shake(a) { this.shakeAmt = Math.max(this.shakeAmt, a * (this.shakeScale ?? 1)); }
   snap() { this._snap = true; }
 
   follow(car, carPos, ballPos, dt) {
     this.time += dt;
+    const onWall = car.onGround ? 1 - THREE.MathUtils.smoothstep(car.normal.y, 0.35, 0.85) : 0;
     // ---- desired heading
-    let want;
-    const dx = ballPos.x - carPos.x, dz = ballPos.z - carPos.z;
-    const flatDist = Math.hypot(dx, dz);
     car.forward(_f);
     const vel = car.vel;
-    // car heading: forward on the ground, velocity in the air / on walls
-    if (!car.onGround && vel.x * vel.x + vel.z * vel.z > 9) _d.set(vel.x, 0, vel.z);
-    else if (car.onGround && car.normal.y < 0.7) _d.set(vel.x, 0, vel.z).lengthSq() > 4 ? _d.set(vel.x, 0, vel.z) : _d.set(_f.x, 0, _f.z);
+    const vh = Math.hypot(vel.x, vel.z);
+    if ((!car.onGround || onWall > 0.3) && vh > 3) _d.set(vel.x, 0, vel.z);
     else _d.set(_f.x, 0, _f.z);
-    if (_d.lengthSq() < 1e-4) _d.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
-    const carYaw = yawOf(_d);
+    // on a wall the car can point straight up: keep the old heading then
+    const carYaw = _d.lengthSq() > 0.09 ? yawOf(_d) : this.yaw;
+    const dx = ballPos.x - carPos.x, dz = ballPos.z - carPos.z;
+    const flatDist = Math.hypot(dx, dz);
+    let want = carYaw;
     if (this.ballCam && flatDist > 0.5) {
-      const ballYaw = Math.atan2(dx, dz);
-      // when the ball is almost on top of us, lean towards the car heading to avoid spinning
       const w = THREE.MathUtils.smoothstep(flatDist, 2.5, 8);
-      want = carYaw + wrap(ballYaw - carYaw) * w;
-    } else want = carYaw;
-
+      want = carYaw + wrap(Math.atan2(dx, dz) - carYaw) * w;
+    }
     if (this._snap) this.yaw = want;
     else {
       const diff = wrap(want - this.yaw);
-      const maxTurn = (this.ballCam ? 4.2 : 6.5) * dt;
-      const step = diff * (1 - Math.exp(-(this.ballCam ? 7 : 9) * dt));
+      const maxTurn = this.swivel * dt;
+      const step = diff * (1 - Math.exp(-(4 + this.stiffness * 8) * dt));
       this.yaw = wrap(this.yaw + THREE.MathUtils.clamp(step, -maxTurn, maxTurn));
     }
     const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
 
-    // ---- camera offset relative to the car (smoothed in car-relative space)
+    // ---- camera offset relative to the car
     _o.set(-fx * this.distance, this.height, -fz * this.distance);
-    // pull in when a wall is behind the car
-    const sx = carPos.x, sy = carPos.y + 0.6, sz = carPos.z;
-    let tMax = 1;
-    for (let i = 1; i <= 10; i++) {
-      const t = i / 10;
-      if (sdf(sx + _o.x * t, sy + (_o.y - 0.6) * t, sz + _o.z * t) < 0.45) { tMax = (i - 1) / 10; break; }
+    if (onWall > 0) {
+      // on walls: stand off the surface and trail the car along the wall
+      _t1.copy(_f).addScaledVector(car.normal, -_f.dot(car.normal));
+      if (_t1.lengthSq() < 1e-3) _t1.set(0, 1, 0).addScaledVector(car.normal, -car.normal.y);
+      _t1.normalize();
+      _t2.copy(car.normal).multiplyScalar(this.distance * 0.75 + 0.5)
+        .addScaledVector(_t1, -this.distance * 0.6)
+        .addScaledVector(UP, this.height * 0.5);
+      _o.lerp(_t2, onWall);
     }
-    if (tMax < 1) { _o.multiplyScalar(Math.max(0.25, tMax)); _o.y += (1 - tMax) * 1.4; }
-    const k = this._snap ? 1 : 1 - Math.exp(-14 * dt);
+    const k = this._snap ? 1 : 1 - Math.exp(-(6 + this.stiffness * 16) * dt);
     this.offset.lerp(_o, k);
     _p.copy(carPos).add(this.offset);
-    const s = sdf(_p.x, _p.y, _p.z);
-    if (s < 0.6) { sdfNormal(_p.x, _p.y, _p.z, _n); _p.addScaledVector(_n, 0.6 - s); }
+
+    // ---- keep the camera inside the arena by sliding it along walls (never into the car)
+    _l.copy(_p);
+    for (let i = 0; i < 3; i++) {
+      const s = sdf(_l.x, _l.y, _l.z);
+      if (s >= 0.8) break;
+      sdfNormal(_l.x, _l.y, _l.z, _n);
+      _l.addScaledVector(_n, 0.8 - s);
+    }
+    _l.sub(_p);
+    this.push.lerp(_l, this._snap ? 1 : 1 - Math.exp(-12 * dt));
+    _p.add(this.push);
+    // hard guarantee: never inside a wall
+    const s2 = sdf(_p.x, _p.y, _p.z);
+    if (s2 < 0.35) { sdfNormal(_p.x, _p.y, _p.z, _n); _p.addScaledVector(_n, 0.35 - s2); }
+    // don't sit on top of the car
+    _l.copy(_p).sub(carPos);
+    const dCar = _l.length();
+    if (dCar < 1.8) {
+      if (dCar < 1e-3) _l.copy(car.onGround ? car.normal : UP);
+      _l.normalize();
+      _p.copy(carPos).addScaledVector(_l, 1.8);
+      _p.y = Math.max(_p.y, carPos.y + 0.8);
+    }
 
     // ---- look target
+    const tilt = THREE.MathUtils.degToRad(this.angle);
     if (this.ballCam) {
       const toCarH = Math.hypot(carPos.x - _p.x, carPos.z - _p.z);
       const carPitch = Math.atan2(carPos.y - _p.y + 0.15, Math.max(0.5, toCarH));
@@ -104,15 +134,28 @@ export class CameraRig {
       pitch = THREE.MathUtils.clamp(pitch, carPitch - halfV * 0.3, carPitch + halfV * 0.8);
       this.pitch = this._snap ? pitch : this.pitch + (pitch - this.pitch) * (1 - Math.exp(-8 * dt));
     } else {
-      const target = Math.atan2(carPos.y + 0.9 - _p.y, 4 + this.distance);
+      const target = Math.atan2(carPos.y + 0.9 - _p.y, 4 + this.distance) + tilt;
       this.pitch = this._snap ? target : this.pitch + (target - this.pitch) * (1 - Math.exp(-10 * dt));
     }
-    _l.set(_p.x + fx * Math.cos(this.pitch) * 10, _p.y + Math.sin(this.pitch) * 10, _p.z + fz * Math.cos(this.pitch) * 10);
+    _d.set(fx * Math.cos(this.pitch), Math.sin(this.pitch), fz * Math.cos(this.pitch));
+    // on walls the camera sits beside the car, so aim at a point just past the car instead
+    // ...and do the same whenever a wall has pushed the camera far from where it wanted to be
+    const aim = Math.max(onWall, Math.min(1, this.push.length() / 1.2));
+    this.wallBlend += (aim - this.wallBlend) * (1 - Math.exp(-6 * dt));
+    if (this.wallBlend > 0.01) {
+      if (this.ballCam) {
+        _l.copy(ballPos).sub(carPos);
+        const bl = _l.length();
+        _l.multiplyScalar(bl > 1e-3 ? Math.min(bl, 2.5) / bl : 0).add(carPos); // keep the car centred, lean towards the ball
+      } else _l.copy(carPos).addScaledVector(_f, 4);
+      _l.sub(_p).normalize();
+      _d.lerp(_l, this.wallBlend).normalize();
+    }
+    _l.copy(_p).addScaledVector(_d, 10);
 
     this.pos.copy(_p);
     this.look.copy(_l);
 
-    // a little extra field of view at high speed
     const sp = car.vel.length();
     const wantFov = THREE.MathUtils.clamp((sp - 12) / 11, 0, 1) * 7 + (car.boosting ? 2 : 0);
     this.speedFov += (wantFov - this.speedFov) * (1 - Math.exp(-3 * dt));

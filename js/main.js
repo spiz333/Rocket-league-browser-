@@ -14,6 +14,7 @@ import { EffectComposer } from '../vendor/postprocessing/EffectComposer.js';
 import { RenderPass } from '../vendor/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from '../vendor/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from '../vendor/postprocessing/OutputPass.js';
+import { ShaderPass } from '../vendor/postprocessing/ShaderPass.js';
 
 const $ = (id) => document.getElementById(id);
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
@@ -24,7 +25,8 @@ const STORE_KEY = 'nitro-strikers-settings-v3';
 const DEFAULTS = {
   teamSize: 2, difficulty: 'normal', duration: 300, map: 'random',
   sound: 1, musicVol: 50, sfxVol: 80, autoGas: 1, invertPitch: 0, vibrate: 1,
-  quality: isTouch ? 'medium' : 'high', replays: 1, camDist: 4.6, ballCam: 1, minimap: 1,
+  quality: isTouch ? 'medium' : 'high', replays: 1, ballCam: 1, minimap: 1,
+  camFov: 100, camDist: 4.6, camHeight: 1.65, camAngle: -3, camStiff: 50, camSwivel: 4.5, camShake: 1, stickFlip: 0,
   steerCurve: 1.3, btnSize: 'normal', assist: 1, name: '', look: defaultLook(),
   profile: { xp: 0, level: 1, matches: 0, wins: 0, goals: 0 },
 };
@@ -48,7 +50,7 @@ const quality = settings.quality;
 
 // ---------- renderer & scene ----------
 const canvas = $('game');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: quality === 'high', powerPreference: 'high-performance' });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: quality !== 'low', powerPreference: 'high-performance' });
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
@@ -89,28 +91,53 @@ scene.add(fill);
 const pmrem = new THREE.PMREMGenerator(renderer);
 let envTex = null;
 function buildEnvironment(T) {
+  // A small HDR-ish world for reflections: the map's sky, a bright sun or floodlights,
+  // the stands and the pitch. This is what makes the paint and chrome shine.
   const env = new THREE.Scene();
-  env.add(new THREE.Mesh(new THREE.BoxGeometry(100, 100, 100), new THREE.MeshBasicMaterial({ color: T.env.box, side: THREE.BackSide })));
-  const floorEnv = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshBasicMaterial({ color: T.env.floor }));
-  floorEnv.rotation.x = -Math.PI / 2;
-  floorEnv.position.y = -20;
-  env.add(floorEnv);
-  const lightMat = new THREE.MeshBasicMaterial({ color: T.env.panels });
+  const skyMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false,
+    uniforms: { top: { value: new THREE.Color(T.sky.top) }, hor: { value: new THREE.Color(T.sky.hor) }, low: { value: new THREE.Color(T.env.floor) } },
+    vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+    fragmentShader: `uniform vec3 top; uniform vec3 hor; uniform vec3 low; varying vec3 vP;
+      void main(){ float h = normalize(vP).y; vec3 c = h > 0.0 ? mix(hor, top, pow(h, 0.6)) : mix(hor * 0.6, low * 0.7, min(1.0, -h * 4.0));
+        gl_FragColor = vec4(c * 1.2, 1.0); }`,
+  });
+  env.add(new THREE.Mesh(new THREE.SphereGeometry(80, 32, 16), skyMat));
+  // stands ring
+  const stands = new THREE.Mesh(new THREE.CylinderGeometry(60, 60, 18, 48, 1, true), new THREE.MeshBasicMaterial({ color: new THREE.Color(T.standColor ?? 0x1a1d27).multiplyScalar(1.4), side: THREE.BackSide }));
+  stands.position.y = -2;
+  env.add(stands);
+  // team coloured boards
+  for (const [team, z] of [[0, -1], [1, 1]]) {
+    const b = new THREE.Mesh(new THREE.PlaneGeometry(90, 4), new THREE.MeshBasicMaterial({ color: new THREE.Color(TEAM_COLORS[team].main).multiplyScalar(1.6) }));
+    b.position.set(0, -8, z * 58);
+    b.lookAt(0, -8, 0);
+    env.add(b);
+  }
+  // bright light sources
+  const hot = new THREE.MeshBasicMaterial({ color: new THREE.Color(T.env.panels).multiplyScalar(6) });
+  if (T.sky.sun) {
+    const d = new THREE.Vector3(...T.sky.sun.dir).normalize();
+    const sunM = new THREE.Mesh(new THREE.SphereGeometry(5, 16, 8), new THREE.MeshBasicMaterial({ color: new THREE.Color(T.sky.sun.color).multiplyScalar(14) }));
+    sunM.position.copy(d.multiplyScalar(70));
+    env.add(sunM);
+  }
   for (let i = 0; i < 4; i++) {
-    const p = new THREE.Mesh(new THREE.PlaneGeometry(20, 8), lightMat);
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(16, 6), hot);
     const a = i * Math.PI / 2 + Math.PI / 4;
-    p.position.set(Math.sin(a) * 45, 30, Math.cos(a) * 45);
+    p.position.set(Math.sin(a) * 55, T.sky.sun ? 26 : 32, Math.cos(a) * 55);
     p.lookAt(0, 0, 0);
     env.add(p);
   }
-  const blueP = new THREE.Mesh(new THREE.PlaneGeometry(60, 6), new THREE.MeshBasicMaterial({ color: TEAM_COLORS[0].main }));
-  blueP.position.set(0, -5, -49); env.add(blueP);
-  const redP = new THREE.Mesh(new THREE.PlaneGeometry(60, 6), new THREE.MeshBasicMaterial({ color: TEAM_COLORS[1].main }));
-  redP.position.set(0, -5, 49); redP.rotation.y = Math.PI; env.add(redP);
+  // a long soft strip light overhead gives the cars a nice highlight line
+  const strip = new THREE.Mesh(new THREE.PlaneGeometry(70, 3), new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffffff).multiplyScalar(T.sky.sun ? 1.5 : 3) }));
+  strip.rotation.x = Math.PI / 2;
+  strip.position.y = 50;
+  env.add(strip);
   if (envTex) envTex.dispose();
-  envTex = pmrem.fromScene(env, 0.04).texture;
+  envTex = pmrem.fromScene(env, 0.02).texture;
   scene.environment = envTex;
-  scene.environmentIntensity = 0.8;
+  scene.environmentIntensity = T.sky.sun ? 0.85 : 0.75;
   env.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
 }
 
@@ -158,11 +185,28 @@ booted = true;
 let composer = null;
 let bloom = null;
 if (quality === 'high') {
-  composer = new EffectComposer(renderer);
+  // multisampled target so edges stay smooth with post-processing on
+  const rt = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, { type: THREE.HalfFloatType, samples: 4 });
+  composer = new EffectComposer(renderer, rt);
   composer.addPass(new RenderPass(scene, camera));
-  bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.5, 0.45, 0.85);
+  bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.45, 0.42, 0.88);
   composer.addPass(bloom);
   composer.addPass(new OutputPass());
+  // final grade: a touch of contrast, saturation and a soft vignette
+  composer.addPass(new ShaderPass({
+    uniforms: { tDiffuse: { value: null } },
+    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+    fragmentShader: `uniform sampler2D tDiffuse; varying vec2 vUv;
+      void main(){
+        vec4 c = texture2D(tDiffuse, vUv);
+        float l = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+        c.rgb = mix(vec3(l), c.rgb, 1.12);
+        c.rgb = (c.rgb - 0.5) * 1.06 + 0.5;
+        vec2 d = vUv - 0.5;
+        c.rgb *= 1.0 - dot(d, d) * 0.55;
+        gl_FragColor = vec4(clamp(c.rgb, 0.0, 1.0), c.a);
+      }`,
+  }));
 }
 
 function applySettings() {
@@ -176,8 +220,14 @@ function applySettings() {
   if (game.player) { game.player.assist = !!+settings.assist; game.player.latchPitch = !!+settings.assist; }
   audio.setEnabled(!!+settings.sound);
   audio.setVolumes(settings.musicVol / 100, settings.sfxVol / 100);
+  input.settings.stickFlip = !!+settings.stickFlip;
+  rig.hFov = +settings.camFov;
   rig.distance = +settings.camDist;
-  rig.height = 1.2 + rig.distance * 0.1;
+  rig.height = +settings.camHeight;
+  rig.angle = +settings.camAngle;
+  rig.stiffness = settings.camStiff / 100;
+  rig.swivel = +settings.camSwivel;
+  rig.shakeScale = +settings.camShake ? 1 : 0;
   renderer.setPixelRatio(pixelRatio());
   game.opts.replays = !!+settings.replays;
   onResize();
@@ -229,6 +279,10 @@ function syncSegments() {
     seg.querySelectorAll('button').forEach(b => b.classList.toggle('sel', String(settings[opt]) === b.dataset.val));
   });
   document.querySelectorAll('input[data-range]').forEach(r => { r.value = settings[r.dataset.range]; });
+  document.querySelectorAll('output[data-out]').forEach(o => {
+    const k = o.dataset.out, v = settings[k];
+    o.textContent = k === 'camFov' ? v + '°' : k === 'camAngle' ? v + '°' : k === 'camStiff' ? v + '%' : String(v);
+  });
   document.querySelectorAll('.map-grid').forEach(g => g.querySelectorAll('.map-card').forEach(c => c.classList.toggle('sel', c.dataset.map === settings.map)));
 }
 
@@ -255,6 +309,7 @@ function setupSegments() {
       settings[r.dataset.range] = +r.value;
       audio.init();
       applySettings();
+      syncSegments();
       saveSettings();
     });
   });
@@ -317,6 +372,10 @@ document.addEventListener('click', e => {
     case 'leave': leaveSession(); showScreen('online'); break;
     case 'switch-team': switchTeam(); break;
     case 'net-start': hostStartMatch(); break;
+    case 'cam-reset':
+      for (const k of ['camFov', 'camDist', 'camHeight', 'camAngle', 'camStiff', 'camSwivel', 'camShake']) settings[k] = DEFAULTS[k];
+      saveSettings(); applySettings(); syncSegments();
+      break;
   }
 });
 

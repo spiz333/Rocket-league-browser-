@@ -3,6 +3,7 @@ import * as THREE from '../vendor/three.module.min.js';
 import { ARENA, TEAM_COLORS, BOOST_PADS } from './config.js';
 import { MAPS } from './maps.js';
 import { buildScenery } from './scenery.js';
+import { grassNormal, softNormal, metalNormal } from './textures.js';
 
 const { W, L, H, RC, RW, GW, GH, GD } = ARENA;
 
@@ -322,9 +323,23 @@ export function buildArena(scene, renderer, quality, T = MAPS[0]) {
     fuv.setXY(i, (x + W) / (2 * W), (y + L) / (2 * L));
   }
   floorGeo.rotateX(-Math.PI / 2);
+  // fine surface detail: a tiling normal map on top of the painted field
+  const aniso = renderer.capabilities.getMaxAnisotropy();
+  const style = T.turf.style;
+  const detail = nice ? (style === 'metal' ? metalNormal() : style === 'snow' ? softNormal() : grassNormal()).clone() : null;
+  if (detail) {
+    const rep = style === 'metal' ? [17, 23] : [70, 95];
+    detail.repeat.set(rep[0], rep[1]);
+    detail.anisotropy = aniso;
+    detail.needsUpdate = true;
+  }
   const floorMat = new THREE.MeshStandardMaterial({
-    map: fieldTexture(renderer.capabilities.getMaxAnisotropy(), high, T.turf),
-    roughness: T.turf.style === 'metal' ? 0.45 : T.turf.style === 'snow' ? 0.7 : 0.85, metalness: T.turf.style === 'metal' ? 0.5 : 0.0,
+    map: fieldTexture(aniso, high, T.turf),
+    normalMap: detail,
+    normalScale: new THREE.Vector2(style === 'metal' ? 0.5 : 0.85, style === 'metal' ? 0.5 : 0.85),
+    roughness: style === 'metal' ? 0.32 : style === 'snow' ? 0.62 : 0.9,
+    metalness: style === 'metal' ? 0.55 : 0.0,
+    envMapIntensity: style === 'metal' ? 1.2 : 0.35,
   });
   const floor = new THREE.Mesh(floorGeo, floorMat);
   floor.receiveShadow = true;
@@ -336,7 +351,9 @@ export function buildArena(scene, renderer, quality, T = MAPS[0]) {
     return c.lerp(new THREE.Color(T.board), 0.45);
   }, true, 3);
   const boards = new THREE.Mesh(boardsGeo, new THREE.MeshStandardMaterial({
-    vertexColors: true, roughness: 0.55, metalness: 0.35, map: panelTexture(),
+    vertexColors: true, roughness: 0.4, metalness: 0.45, map: panelTexture(),
+    normalMap: nice ? (() => { const t = metalNormal().clone(); t.repeat.set(1, 1); t.needsUpdate = true; return t; })() : null,
+    normalScale: new THREE.Vector2(0.6, 0.6),
   }));
   boards.receiveShadow = true;
   group.add(boards);
@@ -661,7 +678,7 @@ export function buildArena(scene, renderer, quality, T = MAPS[0]) {
       if (o.geometry) o.geometry.dispose();
       const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
       for (const m of mats) {
-        for (const k of ['map', 'emissiveMap', 'alphaMap']) if (m[k]) m[k].dispose();
+        for (const k of ['map', 'emissiveMap', 'alphaMap', 'normalMap']) if (m[k]) m[k].dispose();
         m.dispose();
       }
     });

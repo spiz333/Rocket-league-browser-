@@ -248,7 +248,8 @@ export class Car {
         this.doubleJumped = true;
         const f = c.fwd !== undefined ? c.fwd : c.pitch, s = c.steer;
         const mag = Math.hypot(f, s);
-        if (mag > 0.5) {
+        // touch taps always double jump (touch players flip with a swipe instead)
+        if (mag > 0.5 && !c.noDodge) {
           this.startDodge(f / mag, s / mag);
           if (this.latchPitch && Math.abs(c.pitch) > 0.3) this.pitchLatch = Math.sign(c.pitch);
         } else {

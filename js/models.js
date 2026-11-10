@@ -1,6 +1,7 @@
 // Procedural meshes for cars, wheels and the ball (all original designs).
 import * as THREE from '../vendor/three.module.min.js';
 import { BALL, TEAM_COLORS } from './config.js';
+import { flakeNormal, tireTexture, carbonTexture } from './textures.js';
 
 // Side profiles (z forward, y up) run from the rear bottom, over the top, to the front bottom.
 export const BODY_TYPES = [
@@ -191,7 +192,11 @@ const treadGeo = new THREE.TorusGeometry(0.195, 0.012, 4, 28);
 treadGeo.rotateY(Math.PI / 2);
 const tireWallGeo = new THREE.TorusGeometry(0.168, 0.035, 8, 28);
 tireWallGeo.rotateY(Math.PI / 2);
-const tireMat = new THREE.MeshStandardMaterial({ color: 0x141518, roughness: 0.92, metalness: 0.0 });
+let tireMatCache = null;
+const tireMatProxy = () => {
+  if (!tireMatCache) tireMatCache = new THREE.MeshStandardMaterial({ color: 0xffffff, map: tireTexture(), roughness: 0.88, metalness: 0.0 });
+  return tireMatCache;
+};
 const rimDiscGeo = new THREE.CylinderGeometry(0.135, 0.135, 0.02, 24);
 rimDiscGeo.rotateZ(Math.PI / 2);
 const hubGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.05, 12);
@@ -263,13 +268,13 @@ function buildRim(style, rimMat, accentMat, darkMat, side) {
 
 function buildWheel(style, rimMat, accentMat, darkMat, side) {
   const spin = new THREE.Group();
-  spin.add(new THREE.Mesh(tireGeo, tireMat));
+  spin.add(new THREE.Mesh(tireGeo, tireMatProxy()));
   for (const sx of [-0.05, 0.05]) {
-    const t = new THREE.Mesh(treadGeo, tireMat);
+    const t = new THREE.Mesh(treadGeo, tireMatProxy());
     t.position.x = sx;
     spin.add(t);
   }
-  const wall = new THREE.Mesh(tireWallGeo, tireMat);
+  const wall = new THREE.Mesh(tireWallGeo, tireMatProxy());
   wall.position.x = side * 0.07;
   spin.add(wall);
   const face = buildRim(style, rimMat, accentMat, darkMat, side);
@@ -298,16 +303,24 @@ export function buildCarMesh(team, look = {}, quality = 'high') {
 
   const paint = typeof look.paintColor === 'number' ? look.paintColor : (PAINTS[look.paint] ? PAINTS[look.paint].color : null);
   const bodyColor = paint != null ? paint : tc.main;
+  // metallic paint: sparkling flakes under a mirror-like clear coat
   const bodyMat = nice
-    ? new THREE.MeshPhysicalMaterial({ color: bodyColor, roughness: 0.3, metalness: 0.45, clearcoat: 1, clearcoatRoughness: 0.06 })
-    : new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.32, metalness: 0.55 });
-  const trimMat = new THREE.MeshStandardMaterial({ color: 0x17191e, roughness: 0.55, metalness: 0.35 });
-  const carbonMat = new THREE.MeshStandardMaterial({ color: 0x0f1013, roughness: 0.35, metalness: 0.6 });
-  const glassMat = new THREE.MeshPhysicalMaterial({ color: 0x0b1220, roughness: 0.05, metalness: 0.2, clearcoat: 1, clearcoatRoughness: 0.02, envMapIntensity: 1.6 });
+    ? new THREE.MeshPhysicalMaterial({
+      color: bodyColor, roughness: 0.28, metalness: 0.6,
+      normalMap: flakeNormal(), normalScale: new THREE.Vector2(0.18, 0.18),
+      clearcoat: 1, clearcoatRoughness: 0.025, envMapIntensity: 1.6,
+      iridescence: quality === 'high' ? 0.12 : 0, iridescenceIOR: 1.4,
+    })
+    : new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.25, metalness: 0.6, envMapIntensity: 1.4 });
+  const trimMat = new THREE.MeshStandardMaterial({ color: 0x17191e, roughness: 0.45, metalness: 0.4 });
+  const carbonMat = nice
+    ? new THREE.MeshPhysicalMaterial({ color: 0xffffff, map: carbonTexture(), roughness: 0.4, metalness: 0.3, clearcoat: 0.8, clearcoatRoughness: 0.08 })
+    : new THREE.MeshStandardMaterial({ color: 0x0f1013, roughness: 0.35, metalness: 0.6 });
+  const glassMat = new THREE.MeshPhysicalMaterial({ color: 0x0a101c, roughness: 0.03, metalness: 0.35, clearcoat: 1, clearcoatRoughness: 0.0, envMapIntensity: 2.2 });
   const accentMat = new THREE.MeshBasicMaterial({ color: tc.glow });
   const teamMat = new THREE.MeshStandardMaterial({ color: tc.main, roughness: 0.35, metalness: 0.4, emissive: tc.dark, emissiveIntensity: 0.4 });
   const wheel = WHEELS[(look.wheel | 0) % WHEELS.length];
-  const rimMat = new THREE.MeshStandardMaterial({ color: wheel.rim, roughness: 0.22, metalness: 0.95 });
+  const rimMat = new THREE.MeshStandardMaterial({ color: wheel.rim, roughness: 0.14, metalness: 1.0, envMapIntensity: 1.8 });
 
   const body = new THREE.Mesh(extrudeProfile(type.profile, type.width, nice ? 0.055 : 0.05, nice ? 4 : 2), bodyMat);
   model.add(body);
@@ -486,7 +499,7 @@ export function buildCarMesh(team, look = {}, quality = 'high') {
   // exhausts
   const exGeo = new THREE.CylinderGeometry(0.05, 0.06, 0.12, 12, 1, true);
   exGeo.rotateX(Math.PI / 2);
-  const exMat = new THREE.MeshStandardMaterial({ color: 0x8a8f99, roughness: 0.25, metalness: 0.95, side: THREE.DoubleSide });
+  const exMat = new THREE.MeshStandardMaterial({ color: 0xc4cad4, roughness: 0.1, metalness: 1.0, envMapIntensity: 2, side: THREE.DoubleSide });
   for (const sx of [-1, 1]) {
     const ex = new THREE.Mesh(exGeo, exMat);
     ex.position.set(sx * 0.16, -0.05, -0.79);
@@ -607,7 +620,7 @@ export function buildBallMesh(quality = 'high') {
   const glowColor = new THREE.Color(0x59f3ff);
   const glowUniform = { value: glowColor };
   const glowAmount = { value: 1.0 };
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.32, metalness: 0.35 });
+  const mat = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.3, metalness: 0.4, clearcoat: 0.6, clearcoatRoughness: 0.15, envMapIntensity: 1.3 });
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.glowColor = glowUniform;
     shader.uniforms.glowAmount = glowAmount;

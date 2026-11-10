@@ -709,3 +709,6 @@ body.replay #scoreboard { transform: translateX(-50%) translateY(-6px) scale(0.8
   .lvl-badge { width: 28px; height: 32px; font-size: 13px; }
 }
 #scoreboard, #replay-tag, #btn-pause, #btn-cam { z-index: 2; }
+
+.set-card output { min-width: 34px; font-size: 12px; font-weight: 800; color: var(--nitro); font-variant-numeric: tabular-nums; }
+.set-card input[type=range] { width: min(170px, 34vw); }
