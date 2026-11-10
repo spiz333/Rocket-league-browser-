@@ -38,10 +38,12 @@ export const CAR = {
   COAST: 5.25,
   BOOST_ACCEL: 10,
   BOOST_USE: 33.3,   // per second
-  JUMP_IMPULSE: 2.92,
-  JUMP_HOLD_ACCEL: 14.6,
+  JUMP_IMPULSE: 3.35,
+  JUMP_HOLD_ACCEL: 13.0,
   JUMP_HOLD_TIME: 0.2,
-  DOUBLE_JUMP_WINDOW: 1.25,
+  DOUBLE_JUMP_WINDOW: 1.35,
+  DOUBLE_JUMP_IMPULSE: 3.2,
+  STEER_RATE: 7.5,   // how fast steering input reaches full lock (1/s)
   DODGE_IMPULSE: 5.0,
   DODGE_TIME: 0.62,
   STICKY: 3.25,

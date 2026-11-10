@@ -1,6 +1,8 @@
 // Visual construction of the stadium. Geometry follows the collision SDF.
 import * as THREE from '../vendor/three.module.min.js';
 import { ARENA, TEAM_COLORS, BOOST_PADS } from './config.js';
+import { MAPS } from './maps.js';
+import { buildScenery } from './scenery.js';
 
 const { W, L, H, RC, RW, GW, GH, GD } = ARENA;
 
@@ -127,7 +129,7 @@ function buildWall(perim, profile, colorFn, skipMouth = true, uvScale = 4) {
 }
 
 // ---------- textures ----------
-function fieldTexture(maxAniso, big) {
+function fieldTexture(maxAniso, big, turf) {
   const cw = big ? 2048 : 1024, ch = Math.round(cw * L / W);
   const c = document.createElement('canvas');
   c.width = cw; c.height = ch;
@@ -136,10 +138,11 @@ function fieldTexture(maxAniso, big) {
   const X = (x) => (x + W) * sx;
   const Z = (z) => (z + L) * sz; // top of canvas = blue goal (z = -L)
 
-  // turf: mowing stripes with a faint cross pattern
-  const stripes = 14;
+  const style = turf.style;
+  // base: mowing stripes with a faint cross pattern
+  const stripes = style === 'metal' ? 23 : 14;
   for (let i = 0; i < stripes; i++) {
-    g.fillStyle = i % 2 ? '#2f7d3a' : '#29703a';
+    g.fillStyle = i % 2 ? turf.a : turf.b;
     g.fillRect(0, (i * ch) / stripes, cw, ch / stripes + 1);
   }
   const cross = 10;
@@ -148,25 +151,38 @@ function fieldTexture(maxAniso, big) {
     g.fillStyle = 'rgba(255,255,255,0.025)';
     g.fillRect((i * cw) / cross, 0, cw / cross, ch);
   }
-  // grass blades
-  const blades = Math.round(cw * ch / 60);
-  for (let i = 0; i < blades; i++) {
-    const x = Math.random() * cw, y = Math.random() * ch;
-    const l = sx * (0.06 + Math.random() * 0.08);
-    const shade = Math.random();
-    g.strokeStyle = shade < 0.5 ? `rgba(20,60,25,${0.25 + shade * 0.3})` : `rgba(120,190,110,${0.08 + (shade - 0.5) * 0.25})`;
-    g.lineWidth = Math.max(1, sx * 0.025);
-    g.beginPath();
-    g.moveTo(x, y);
-    g.lineTo(x + (Math.random() - 0.5) * l * 0.6, y - l);
-    g.stroke();
+  if (style === 'grass') {
+    const blades = Math.round(cw * ch / 60);
+    for (let i = 0; i < blades; i++) {
+      const x = Math.random() * cw, y = Math.random() * ch;
+      const l = sx * (0.06 + Math.random() * 0.08);
+      const shade = Math.random();
+      g.strokeStyle = shade < 0.5 ? `rgba(20,60,25,${0.25 + shade * 0.3})` : `rgba(140,210,120,${0.08 + (shade - 0.5) * 0.25})`;
+      g.lineWidth = Math.max(1, sx * 0.025);
+      g.beginPath();
+      g.moveTo(x, y);
+      g.lineTo(x + (Math.random() - 0.5) * l * 0.6, y - l);
+      g.stroke();
+    }
+  } else if (style === 'snow') {
+    const n = Math.round(cw * ch / 90);
+    for (let i = 0; i < n; i++) {
+      g.fillStyle = Math.random() < 0.5 ? 'rgba(150,180,215,0.35)' : 'rgba(255,255,255,0.9)';
+      g.fillRect(Math.random() * cw, Math.random() * ch, sx * 0.04, sx * 0.04);
+    }
+  } else if (style === 'metal') {
+    g.strokeStyle = 'rgba(120,170,255,0.18)';
+    g.lineWidth = Math.max(1, sx * 0.05);
+    for (let x = -W; x <= W; x += 4) { g.beginPath(); g.moveTo(X(x), 0); g.lineTo(X(x), ch); g.stroke(); }
+    for (let z = -L; z <= L; z += 4) { g.beginPath(); g.moveTo(0, Z(z)); g.lineTo(cw, Z(z)); g.stroke(); }
   }
   // team tint halves
   const tint = g.createLinearGradient(0, 0, 0, ch);
-  tint.addColorStop(0, 'rgba(40,120,255,0.28)');
-  tint.addColorStop(0.45, 'rgba(40,120,255,0.04)');
-  tint.addColorStop(0.55, 'rgba(255,60,80,0.04)');
-  tint.addColorStop(1, 'rgba(255,60,80,0.28)');
+  const ta = turf.tint ?? 0.28;
+  tint.addColorStop(0, `rgba(40,120,255,${ta})`);
+  tint.addColorStop(0.45, 'rgba(40,120,255,0.03)');
+  tint.addColorStop(0.55, 'rgba(255,60,80,0.03)');
+  tint.addColorStop(1, `rgba(255,60,80,${ta})`);
   g.fillStyle = tint;
   g.fillRect(0, 0, cw, ch);
   // subtle noise
@@ -177,7 +193,7 @@ function fieldTexture(maxAniso, big) {
   }
   g.putImageData(img, 0, 0);
 
-  g.strokeStyle = 'rgba(255,255,255,0.85)';
+  g.strokeStyle = turf.line;
   g.lineWidth = 0.28 * sx;
   // boundary (where the floor meets the curved walls)
   const ix = W - RW, iz = L - RW, ir = RC - RW;
@@ -195,7 +211,7 @@ function fieldTexture(maxAniso, big) {
   // midline + center circle
   g.beginPath(); g.moveTo(X(-ix), Z(0)); g.lineTo(X(ix), Z(0)); g.stroke();
   g.beginPath(); g.arc(X(0), Z(0), 9 * sx, 0, Math.PI * 2); g.stroke();
-  g.fillStyle = 'rgba(255,255,255,0.9)';
+  g.fillStyle = turf.line;
   g.beginPath(); g.arc(X(0), Z(0), 0.6 * sx, 0, Math.PI * 2); g.fill();
   // goal areas
   for (const s of [-1, 1]) {
@@ -275,9 +291,10 @@ function glowSpriteTexture() {
 export const GLOW_TEX = { tex: null };
 
 // ---------- main builder ----------
-export function buildArena(scene, renderer, quality) {
+export function buildArena(scene, renderer, quality, T = MAPS[0]) {
   const high = quality === 'high';
   const nice = quality !== 'low';
+  const night = !T.sky.sun;
   const group = new THREE.Group();
   scene.add(group);
   const blue = new THREE.Color(TEAM_COLORS[0].main);
@@ -306,7 +323,8 @@ export function buildArena(scene, renderer, quality) {
   }
   floorGeo.rotateX(-Math.PI / 2);
   const floorMat = new THREE.MeshStandardMaterial({
-    map: fieldTexture(renderer.capabilities.getMaxAnisotropy(), high), roughness: 0.85, metalness: 0.0,
+    map: fieldTexture(renderer.capabilities.getMaxAnisotropy(), high, T.turf),
+    roughness: T.turf.style === 'metal' ? 0.45 : T.turf.style === 'snow' ? 0.7 : 0.85, metalness: T.turf.style === 'metal' ? 0.5 : 0.0,
   });
   const floor = new THREE.Mesh(floorGeo, floorMat);
   floor.receiveShadow = true;
@@ -315,7 +333,7 @@ export function buildArena(scene, renderer, quality) {
   // lower boards (solid)
   const boardsGeo = buildWall(perim, profileRange(0, 5.2), (x, y, z) => {
     const c = teamTint(z, blue, red).multiplyScalar(0.18 + 0.12 * (y / 5.2));
-    return c.lerp(new THREE.Color(0x14161c), 0.45);
+    return c.lerp(new THREE.Color(T.board), 0.45);
   }, true, 3);
   const boards = new THREE.Mesh(boardsGeo, new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: 0.55, metalness: 0.35, map: panelTexture(),
@@ -330,7 +348,7 @@ export function buildArena(scene, renderer, quality) {
   // glass upper walls (additive panels)
   const glassGeo = buildWall(perim, profileRange(5.45, H), (x, y, z) => teamTint(z, blue, red).multiplyScalar(0.55), true, 5);
   const glassMat = new THREE.MeshBasicMaterial({
-    vertexColors: true, map: panelTexture(), transparent: true, opacity: 0.55,
+    vertexColors: true, map: panelTexture(), transparent: true, opacity: T.glass,
     blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
   });
   const glass = new THREE.Mesh(glassGeo, glassMat);
@@ -401,13 +419,18 @@ export function buildArena(scene, renderer, quality) {
   }
 
   // outer ground
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), new THREE.MeshStandardMaterial({ color: 0x0b0d14, roughness: 1 }));
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.y = -0.05;
-  group.add(ground);
+  if (T.ground != null && T.props !== 'beach' && T.props !== 'city') {
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1400), new THREE.MeshStandardMaterial({ color: T.ground, roughness: 1 }));
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.05;
+    ground.receiveShadow = true;
+    group.add(ground);
+  }
 
   // stands: stepped tiers around the arena
+  let crowdMat = null;
   const tiers = 9;
+  if (T.stands) {
   const standProfile = [];
   for (let t = 0; t < tiers; t++) {
     const o = 7 + t * 2.4;
@@ -428,7 +451,7 @@ export function buildArena(scene, renderer, quality) {
       const Q = standProfile[j];
       sp[k * 3] = P.x + P.nx * Q.o; sp[k * 3 + 1] = Q.y; sp[k * 3 + 2] = P.z + P.nz * Q.o;
       sn[k * 3] = P.nx * Q.nh; sn[k * 3 + 1] = Q.ny; sn[k * 3 + 2] = P.nz * Q.nh;
-      const tint = teamTint(P.z, blue, red).multiplyScalar(0.12).add(new THREE.Color(0x1a1d27));
+      const tint = teamTint(P.z, blue, red).multiplyScalar(0.12).add(new THREE.Color(T.standColor));
       const shade = (j % 4 < 2) ? 0.7 : 1.0;
       sc[k * 3] = tint.r * shade; sc[k * 3 + 1] = tint.g * shade; sc[k * 3 + 2] = tint.b * shade;
       k++;
@@ -473,7 +496,7 @@ export function buildArena(scene, renderer, quality) {
   crowdGeo.setAttribute('position', new THREE.BufferAttribute(cp, 3));
   crowdGeo.setAttribute('color', new THREE.BufferAttribute(cc, 3));
   crowdGeo.setAttribute('phase', new THREE.BufferAttribute(cph, 1));
-  const crowdMat = new THREE.ShaderMaterial({
+  crowdMat = new THREE.ShaderMaterial({
     uniforms: { time: { value: 0 }, excite: { value: 0.1 }, scale: { value: 400 } },
     vertexShader: `
       attribute vec3 color; attribute float phase;
@@ -497,10 +520,12 @@ export function buildArena(scene, renderer, quality) {
   });
   const crowd = new THREE.Points(crowdGeo, crowdMat);
   group.add(crowd);
+  }
 
   // light towers
-  const glowMat = new THREE.SpriteMaterial({ map: GLOW_TEX.tex, color: 0xdfe9ff, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true });
   const poleMat = new THREE.MeshStandardMaterial({ color: 0x2a2e38, roughness: 0.7, metalness: 0.5 });
+  if (T.towers) {
+  const glowMat = new THREE.SpriteMaterial({ map: GLOW_TEX.tex, color: 0xdfe9ff, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true });
   const panelMat = new THREE.MeshBasicMaterial({ color: 0xf4f8ff });
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
     const px = sx * (W + 26), pz = sz * (L + 22);
@@ -518,9 +543,10 @@ export function buildArena(scene, renderer, quality) {
     spr.position.set(px * 0.97, 43, pz * 0.97);
     group.add(spr);
   }
+  }
 
   // soft light beams from the towers onto the pitch
-  if (nice) {
+  if (nice && T.beams) {
     const beamGeo = new THREE.CylinderGeometry(1.2, 10, 1, 24, 1, true);
     beamGeo.translate(0, -0.5, 0);
     const beamMat = new THREE.ShaderMaterial({
@@ -543,7 +569,7 @@ export function buildArena(scene, renderer, quality) {
   }
 
   // neon rim where the walls meet the ceiling
-  const rimGeo = buildWall(perim, profileRange(H - 0.35, H).map(p => ({ ...p })), (x, y, z) => teamTint(z, blue, red).multiplyScalar(1.4), false, 3);
+  const rimGeo = buildWall(perim, profileRange(H - 0.35, H).map(p => ({ ...p })), (x, y, z) => teamTint(z, blue, red).multiplyScalar(night ? 1.4 : 0.9), false, 3);
   group.add(new THREE.Mesh(rimGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, transparent: true, opacity: 0.8 })));
 
   // jumbotron above the center
@@ -590,22 +616,31 @@ export function buildArena(scene, renderer, quality) {
 
   // sky
   const skyGeo = new THREE.SphereGeometry(400, 24, 16);
+  const sun = T.sky.sun;
   const skyMat = new THREE.ShaderMaterial({
-    side: THREE.BackSide, depthWrite: false,
-    uniforms: {},
+    side: THREE.BackSide, depthWrite: false, fog: false,
+    uniforms: {
+      top: { value: new THREE.Color(T.sky.top) }, hor: { value: new THREE.Color(T.sky.hor) }, low: { value: new THREE.Color(T.sky.low) },
+      sunDir: { value: new THREE.Vector3(...(sun ? sun.dir : [0, 1, 0])).normalize() },
+      sunColor: { value: new THREE.Color(sun ? sun.color : 0x000000) }, sunSize: { value: sun ? sun.size : 0 },
+    },
     vertexShader: `varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
-    fragmentShader: `varying vec3 vP; void main(){
-      float h = normalize(vP).y;
-      vec3 top = vec3(0.02,0.03,0.09);
-      vec3 hor = vec3(0.16,0.10,0.28);
-      vec3 low = vec3(0.03,0.03,0.05);
+    fragmentShader: `uniform vec3 top; uniform vec3 hor; uniform vec3 low; uniform vec3 sunDir; uniform vec3 sunColor; uniform float sunSize;
+      varying vec3 vP; void main(){
+      vec3 d = normalize(vP);
+      float h = d.y;
       vec3 c = h > 0.0 ? mix(hor, top, pow(h, 0.55)) : mix(hor, low, min(1.0, -h * 6.0));
+      if (sunSize > 0.0) {
+        float a = dot(d, sunDir);
+        c += sunColor * smoothstep(1.0 - sunSize * 0.12, 1.0 - sunSize * 0.08, a) * 2.0;
+        c += sunColor * pow(max(0.0, a), 60.0) * 0.6 + sunColor * pow(max(0.0, a), 6.0) * 0.18;
+      }
       gl_FragColor = vec4(c, 1.0);
     }`,
   });
   const sky = new THREE.Mesh(skyGeo, skyMat);
   group.add(sky);
-  const starCount = 700;
+  const starCount = T.sky.stars || 0;
   const stp = new Float32Array(starCount * 3);
   for (let i = 0; i < starCount; i++) {
     const th = Math.random() * Math.PI * 2, ph = Math.random() * 0.45 * Math.PI;
@@ -613,10 +648,26 @@ export function buildArena(scene, renderer, quality) {
     stp[i * 3 + 1] = Math.sin(ph) * 380 + 20;
     stp[i * 3 + 2] = Math.sin(th) * Math.cos(ph) * 380;
   }
-  const stars = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(stp, 3)), new THREE.PointsMaterial({ color: 0xffffff, size: 1.2, sizeAttenuation: false }));
-  group.add(stars);
+  if (starCount) {
+    const stars = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(stp, 3)), new THREE.PointsMaterial({ color: 0xffffff, size: 1.2, sizeAttenuation: false, fog: false }));
+    group.add(stars);
+  }
 
-  return { group, crowd, crowdMat, drawJumbo, glassMat };
+  const update = buildScenery(group, T, quality);
+
+  function dispose() {
+    scene.remove(group);
+    group.traverse(o => {
+      if (o.geometry) o.geometry.dispose();
+      const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+      for (const m of mats) {
+        for (const k of ['map', 'emissiveMap', 'alphaMap']) if (m[k]) m[k].dispose();
+        m.dispose();
+      }
+    });
+  }
+
+  return { group, crowdMat, drawJumbo, glassMat, update, dispose, dustColor: T.dust, theme: T };
 }
 
 // ---------- boost pads ----------

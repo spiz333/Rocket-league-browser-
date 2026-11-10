@@ -4,7 +4,7 @@ import { ARENA, BALL, CAR, BOOST_PADS, KICKOFF_SPOTS, KICKOFF_SETS, BOT_NAMES, T
 import { Ball, stepBall, BallPredictor } from './ball.js';
 import { Car, emptyControls } from './car.js';
 import { Bot, assignRoles } from './ai.js';
-import { buildCarMesh, buildBallMesh, buildShadowMesh } from './models.js';
+import { buildCarMesh, buildBallMesh, buildShadowMesh, BODY_TYPES, WHEELS, BOOSTS, DECALS, PAINTS } from './models.js';
 import { Recorder } from './replay.js';
 import { goalAt } from './sdf.js';
 import { formatTime } from './hud.js';
@@ -58,7 +58,7 @@ export class Game {
     this.shadows = !!env.shadows;
 
     this.ball = new Ball();
-    this.ballView = buildBallMesh();
+    this.ballView = buildBallMesh(this.quality);
     this.scene.add(this.ballView.group);
     this.ballShadow = buildShadowMesh(2.8);
     this.scene.add(this.ballShadow);
@@ -124,15 +124,16 @@ export class Game {
       {
         const team = entry.team;
         const isPlayer = entry.owner != null && entry.owner === localOwner;
-        const name = String(entry.name || 'Speler').replace(/[<>&"'`]/g, '').slice(0, 16) || 'Speler';
-        const car = new Car(team, name, { isPlayer, body: (entry.body | 0) % 3, paint: typeof entry.paint === 'number' ? entry.paint : null });
+        const name = String(entry.name || 'Player').replace(/[<>&"'`]/g, '').slice(0, 16) || 'Player';
+        const car = new Car(team, name, { isPlayer });
+        car.look = Game.cleanLook(entry.look);
         car.owner = entry.owner ?? null;
         car.events = this.carEvents();
         this.cars.push(car);
         if (isPlayer) this.player = car;
         else if (car.owner == null && this.role !== 'client') this.bots.push(new Bot(car, o.difficulty));
         else if (car.owner != null && this.role === 'host') this.remote.set(car.owner, { car, input: emptyControls(), ack: 0, pressSeen: false });
-        const view = buildCarMesh(team, car.body, car.paint, this.quality);
+        const view = buildCarMesh(team, car.look, this.quality);
         this.scene.add(view.root);
         if (!this.shadows) {
           view.blob = buildShadowMesh(2.0);
@@ -163,6 +164,17 @@ export class Game {
     this.updateJumbo();
   }
 
+  static randomLook() {
+    const r = (n) => (Math.random() * n) | 0;
+    return { body: r(BODY_TYPES.length), paint: Math.random() < 0.7 ? 0 : r(PAINTS.length), wheel: r(WHEELS.length), boost: r(BOOSTS.length), decal: r(DECALS.length), number: 1 + r(98) };
+  }
+
+  static cleanLook(l) {
+    l = l || {};
+    const n = (v, max) => Math.max(0, Math.min(max - 1, v | 0));
+    return { body: n(l.body, BODY_TYPES.length), paint: n(l.paint, PAINTS.length), wheel: n(l.wheel, WHEELS.length), boost: n(l.boost, BOOSTS.length), decal: n(l.decal, DECALS.length), number: n(l.number, 100) };
+  }
+
   static defaultRoster(o) {
     const names = shuffle([...BOT_NAMES]);
     const sizes = o.mode === 'training' ? [1, 0] : [o.teamSize, o.teamSize];
@@ -171,8 +183,8 @@ export class Game {
       for (let i = 0; i < sizes[team]; i++) {
         const isPlayer = o.mode !== 'attract' && team === 0 && i === 0;
         roster.push({
-          team, name: isPlayer ? 'Jij' : names.pop(), owner: isPlayer ? 'local' : null,
-          body: isPlayer ? o.body : (Math.random() * 3) | 0, paint: isPlayer ? o.paint : null,
+          team, name: isPlayer ? (o.playerName || 'You') : names.pop(), owner: isPlayer ? 'local' : null,
+          look: isPlayer ? o.look : Game.randomLook(),
         });
       }
     }
@@ -181,9 +193,9 @@ export class Game {
 
   carEvents() {
     return {
-      jump: (car) => { if (car === this.player) this.audio.jump(); },
+      jump: (car) => { if (car === this.player) this.audio.jump(); if (car.onGround === false && car.sinceJump === 0) this.dust(car, 10); },
       dodge: (car) => { if (car === this.player) this.audio.dodge(); },
-      land: (car) => { if (car === this.player) this.audio.land(0.6); },
+      land: (car) => { if (car === this.player) this.audio.land(0.6); car.squash = 0.6; this.dust(car, 6); },
       thud: (car, s) => { if (car === this.player) this.audio.land(Math.min(1, s / 8)); },
     };
   }
@@ -253,7 +265,7 @@ export class Game {
 
   goHud() {
     if (this.opts.mode === 'attract') return;
-    this.hud.message(this.overtime ? 'VERLENGING!' : 'GO!', 'go', 0.8);
+    this.hud.message(this.overtime ? 'OVERTIME!' : 'GO!', 'go', 0.8);
     this.audio.countdown(true);
   }
 
@@ -348,11 +360,35 @@ export class Game {
     this.acc += Math.min(dt, 0.1);
     let steps = 0;
     while (this.acc >= PHYS_STEP && steps < 12) {
+      this.savePrevAll();
       this.physicsStep(PHYS_STEP);
       this.acc -= PHYS_STEP;
       steps++;
     }
     if (steps >= 12) this.acc = 0;
+  }
+
+  savePrevAll() {
+    this.ball.savePrev();
+    for (const c of this.cars) c.savePrev();
+  }
+
+  // positions used for drawing: blended between the last two physics steps
+  computeRenderState() {
+    const a = this.role === 'client' ? 1 : Math.min(1, this.acc / PHYS_STEP);
+    const b = this.ball;
+    if (!b.prevPos) b.savePrev();
+    b.renderPos.copy(b.prevPos).lerp(b.pos, a);
+    b.renderQuat.copy(b.prevQuat).slerp(b.quat, a);
+    for (const c of this.cars) {
+      if (!c.prevPos) c.savePrev();
+      if (!c.renderQuat) c.renderQuat = new THREE.Quaternion();
+      const k = this.role === 'client' && c === this.player ? Math.min(1, this.ownAcc / PHYS_STEP) : a;
+      if (c.prevPos.distanceToSquared(c.pos) > 25) c.savePrev(); // teleported
+      c.renderPos.copy(c.prevPos).lerp(c.pos, k);
+      c.renderQuat.copy(c.prevQuat).slerp(c.quat, k);
+      if (this.role === 'client' && c === this.player) c.renderPos.add(this.ownOffset);
+    }
   }
 
   physicsStep(h) {
@@ -686,7 +722,7 @@ export class Game {
         this.emitFx({ k: 'whistle' });
         this.overtime = true;
         this.timeLeft = 0;
-        this.emitFx({ k: 'msg', t: 'VERLENGING', cls: 'overtime', d: 2 });
+        this.emitFx({ k: 'msg', t: 'OVERTIME', cls: 'overtime', d: 2 });
         this.kickoffReset(3);
       } else this.endMatch();
     }
@@ -764,15 +800,15 @@ export class Game {
         this.audio.demolish();
         this.rig.shake(vic === this.player || car === this.player ? 0.6 : 0.15 * this.nearFactor(pos));
         if (car && show) this.hud.feed(`<b class="t${car.team}">${car.name}</b> 💥 <b class="t${vic.team}">${vic.name}</b>`, car.team);
-        if (car && car === this.player) this.hud.subMessage('DEMOLITIE!', 1.2);
+        if (car && car === this.player) this.hud.callout('DEMOLITION', 25);
         if (vic === this.player) vib([30, 40, 60]);
         break;
       }
-      case 'shot': if (car === this.player) this.hud.subMessage('SCHOT OP DOEL', 1.0); break;
+      case 'shot': if (car === this.player) this.hud.callout('SHOT ON TARGET', 20); break;
       case 'save':
         if (!car) break;
-        this.hud.feed(`<b class="t${car.team}">${car.name}</b> redt!`, car.team);
-        if (car === this.player) this.hud.message('REDDING!', 'save t' + car.team, 1.2);
+        this.hud.feed(`🛡 <b class="t${car.team}">${car.name}</b> made a save`, car.team);
+        if (car === this.player) { this.hud.message('SAVE!', 'save t' + car.team, 1.2); this.hud.callout('SAVE', 50); }
         break;
       case 'goal': {
         const team = e.team;
@@ -783,13 +819,15 @@ export class Game {
         if (!show) break;
         const ours = this.player ? this.player.team === team : true;
         this.audio.goal(ours);
-        const sub = scorer ? `${scorer === this.player ? 'Jij scoort' : scorer.name + ' scoort'}${assist ? ' • assist ' + assist.name : ''}` : 'Eigen doelpunt!';
+        const sub = scorer ? `${scorer === this.player ? 'You scored' : scorer.name + ' scored'}${assist ? ' • assist ' + assist.name : ''}` : 'Own goal!';
+        if (scorer && scorer === this.player) this.hud.callout('GOAL', 100);
+        if (assist && assist === this.player) this.hud.callout('ASSIST', 50);
         this.hud.message('GOAL!', 'goal t' + team, 2.8, sub);
-        this.hud.feed(scorer ? `⚽ <b class="t${team}">${scorer.name}</b>${assist ? ` <small>(${assist.name})</small>` : ''}` : `⚽ eigen goal`, team);
+        this.hud.feed(scorer ? `⚽ <b class="t${team}">${scorer.name}</b>${assist ? ` <small>(${assist.name})</small>` : ''}` : `⚽ own goal`, team);
         vib(ours ? [40, 60, 120] : 60);
         break;
       }
-      case 'timeup': this.hud.subMessage('Laatste aanraking telt… bal moet de grond raken', 2.5); break;
+      case 'timeup': this.hud.subMessage('Time! The match ends when the ball hits the ground', 2.5); break;
       case 'whistle': this.audio.whistle(); break;
       case 'msg': this.hud.message(e.t, e.cls || '', e.d || 1.5); break;
       case 'end': {
@@ -960,7 +998,7 @@ export class Game {
         this.inputHistory.push({ seq: this.inputSeq, dt, c: { ...p.controls } });
         if (this.inputHistory.length > 240) this.inputHistory.shift();
         this.ownAcc += Math.min(dt, 0.1);
-        while (this.ownAcc >= PHYS_STEP) { p.step(PHYS_STEP, this.time); this.ownAcc -= PHYS_STEP; }
+        while (this.ownAcc >= PHYS_STEP) { p.savePrev(); p.step(PHYS_STEP, this.time); this.ownAcc -= PHYS_STEP; }
       } else {
         this.ownAcc = 0;
       }
@@ -978,23 +1016,25 @@ export class Game {
 
     // ball
     const b = replay ? this.replayProxies.ball : this.ball;
+    const bPos = replay ? b.pos : this.ball.renderPos;
+    const bQuat = replay ? b.quat : this.ball.renderQuat;
     const bv = this.ballView.group;
     bv.visible = !b.hidden;
-    bv.position.copy(b.pos);
-    this.ballView.mesh.quaternion.copy(b.quat);
-    this.ballShadow.visible = !b.hidden && b.pos.y < 30;
-    this.ballShadow.position.set(b.pos.x, 0.03, b.pos.z);
-    const ss = 1 + b.pos.y * 0.05;
+    bv.position.copy(bPos);
+    this.ballView.mesh.quaternion.copy(bQuat);
+    this.ballShadow.visible = !b.hidden && bPos.y < 30;
+    this.ballShadow.position.set(bPos.x, 0.03, bPos.z);
+    const ss = 1 + bPos.y * 0.05;
     this.ballShadow.scale.set(ss, ss, ss);
-    this.ballShadow.material.opacity = Math.max(0.15, 1 - b.pos.y / 22) * (this.shadows ? 0.35 : 1);
+    this.ballShadow.material.opacity = Math.max(0.15, 1 - bPos.y / 22) * (this.shadows ? 0.35 : 1);
     const sinceHit = this.time - (this.ball.lastHit ?? -10);
     const flash = replay ? 0 : Math.max(0, 1 - sinceHit * 3) * Math.min(1, (this.ball.lastHitStrength || 0) / 15);
     this.ballView.halo.material.opacity = flash * 0.9;
-    this.ballView.mat.emissiveIntensity = 1 + flash * 6;
+    if (this.ballView.setGlow) this.ballView.setGlow(flash, this.ball.lastTeam);
     if (!replay && !b.hidden && this.ball.vel.lengthSq() > 600) {
       const tc = this.ball.lastTeam !== undefined ? TEAM_COLORS[this.ball.lastTeam].glow : 0xffffff;
       _col.set(tc);
-      this.fx.spawn(b.pos.x, b.pos.y, b.pos.z, 0, 0, 0, 0.35, 1.3, _col.r, _col.g, _col.b, 0.35, { grow: -2 });
+      this.fx.spawn(bPos.x, bPos.y, bPos.z, 0, 0, 0, 0.35, 1.3, _col.r, _col.g, _col.b, 0.35, { grow: -2 });
     }
 
     // cars
@@ -1003,13 +1043,19 @@ export class Game {
       const src = replay ? this.replayProxies.cars[i] : car;
       view.root.visible = !src.demolished;
       if (src.demolished) return;
-      view.root.position.copy(src.pos);
-      if (!replay && car === this.player && this.role === 'client') view.root.position.add(this.ownOffset);
-      view.root.quaternion.copy(src.quat);
-      car.renderPos.copy(view.root.position);
+      const pos = replay ? src.pos : car.renderPos;
+      const quat = replay ? src.quat : car.renderQuat;
+      view.root.position.copy(pos);
+      view.root.quaternion.copy(quat);
+      if (replay) car.renderPos.copy(pos);
+      // squash & stretch on jumps, lean in turns
+      const sq = replay ? 0 : car.squash;
+      view.model.scale.set(1 + sq * 0.06, 1 - sq * 0.1, 1 + sq * 0.04);
+      const lean = replay || !car.onGround ? 0 : -car.steerEff * Math.min(1, car.speed() / 14) * 0.06;
+      view.model.rotation.z += (lean - view.model.rotation.z) * Math.min(1, 10 * dt);
       // wheels
-      const steer = replay ? 0 : car.controls.steer;
-      car.steerVis += (steer - car.steerVis) * Math.min(1, 12 * dt);
+      const steer = replay ? 0 : (car.steerEff ?? car.controls.steer);
+      car.steerVis += (steer - car.steerVis) * Math.min(1, 14 * dt);
       for (const w of view.wheels) {
         w.spin.rotation.x = car.wheelSpin;
         if (w.front) w.pivot.rotation.y = -car.steerVis * 0.45;
@@ -1022,17 +1068,18 @@ export class Game {
       if (boosting) {
         const s = 0.8 + Math.random() * 0.5;
         view.flames.scale.set(1, 1, s);
-        _v.set(0, -0.02, -0.95).applyQuaternion(src.quat).add(src.pos);
-        _v2.set(0, 0, -1).applyQuaternion(src.quat);
+        _v.set(0, -0.02, -0.95).applyQuaternion(quat).add(pos);
+        _v2.set(0, 0, -1).applyQuaternion(quat);
+        const bc = view.boostRGB;
         const n = this.quality === 'high' ? 2 : 1;
         for (let k = 0; k < n; k++) {
           this.fx.spawn(_v.x, _v.y, _v.z,
             _v2.x * 6 + (Math.random() - 0.5), _v2.y * 6 + (Math.random() - 0.5), _v2.z * 6 + (Math.random() - 0.5),
-            0.35, 0.45, 0.45, 0.85, 1.0, 0.8, { drag: 2, grow: 1.2 });
+            0.35, 0.45, bc[0], bc[1], bc[2], 0.8, { drag: 2, grow: 1.2 });
         }
       }
       if (!replay && car.supersonic) {
-        _v.set((Math.random() - 0.5) * 0.6, 0.1, -0.7).applyQuaternion(src.quat).add(src.pos);
+        _v.set((Math.random() - 0.5) * 0.6, 0.1, -0.7).applyQuaternion(quat).add(pos);
         this.fx.spawn(_v.x, _v.y, _v.z, 0, 0, 0, 0.3, 0.35, 1, 1, 1, 0.6, { grow: -0.8 });
       }
     });
@@ -1043,5 +1090,11 @@ export class Game {
       u.time.value = time;
       u.excite.value = Math.max(0.12, u.excite.value - dt * 0.25);
     }
+    if (this.arena.update) this.arena.update(dt, time, this.rig.camera);
+  }
+
+  dust(car, amount) {
+    _v.copy(car.pos).addScaledVector(car.normal, -CAR.RIDE + 0.05);
+    this.fx.burst(_v, amount, 3, this.arena.dustColor ?? 0xcfd8c0, { life: 0.5, size: 0.45, drag: 3, grow: 1.2, alpha: 0.35, up: true });
   }
 }

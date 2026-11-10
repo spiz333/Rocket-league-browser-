@@ -6,8 +6,9 @@ import { Input } from './input.js';
 import { Hud } from './hud.js';
 import { CameraRig } from './camera.js';
 import { Game } from './game.js';
-import { PAINTS, buildCarMesh } from './models.js';
+import { PAINTS, BODY_TYPES, WHEELS, BOOSTS, DECALS, buildCarMesh, defaultLook } from './models.js';
 import { TEAM_COLORS, BOT_NAMES } from './config.js';
+import { MAPS, getMap } from './maps.js';
 import { Net, errorText, cleanCode } from './net.js';
 import { EffectComposer } from '../vendor/postprocessing/EffectComposer.js';
 import { RenderPass } from '../vendor/postprocessing/RenderPass.js';
@@ -19,22 +20,24 @@ const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in win
 if (isTouch) document.body.classList.add('touch');
 
 // ---------- settings ----------
-const STORE_KEY = 'nitro-strikers-settings-v1';
+const STORE_KEY = 'nitro-strikers-settings-v3';
 const DEFAULTS = {
-  teamSize: 2, difficulty: 'normal', duration: 300, body: 0, paint: 0,
-  sound: 1, autoGas: 1, invertPitch: 0, vibrate: 1, quality: isTouch ? 'medium' : 'high', gfx: 2,
-  replays: 1, camDist: 4.6, ballCam: 1,
-  steerCurve: 1.3, btnSize: 'normal', assist: 1, name: '',
+  teamSize: 2, difficulty: 'normal', duration: 300, map: 'random',
+  sound: 1, musicVol: 50, sfxVol: 80, autoGas: 1, invertPitch: 0, vibrate: 1,
+  quality: isTouch ? 'medium' : 'high', replays: 1, camDist: 4.6, ballCam: 1, minimap: 1,
+  steerCurve: 1.3, btnSize: 'normal', assist: 1, name: '', look: defaultLook(),
 };
 let settings = { ...DEFAULTS };
 try {
   const raw = localStorage.getItem(STORE_KEY);
-  if (raw) {
-    const saved = JSON.parse(raw);
-    // graphics presets changed in v2: start from the new default
-    if (saved.gfx !== DEFAULTS.gfx) { delete saved.quality; saved.gfx = DEFAULTS.gfx; }
-    settings = { ...DEFAULTS, ...saved };
+  const old = localStorage.getItem('nitro-strikers-settings-v1');
+  if (raw) settings = { ...DEFAULTS, ...JSON.parse(raw) };
+  else if (old) {
+    // carry over a few things from the previous version
+    const o = JSON.parse(old);
+    settings = { ...DEFAULTS, name: o.name || '', look: { ...defaultLook(), body: o.body | 0, paint: o.paint | 0 }, autoGas: o.autoGas ?? 1, invertPitch: o.invertPitch ?? 0 };
   }
+  settings.look = { ...defaultLook(), ...settings.look };
 } catch (_) { /* storage unavailable */ }
 function saveSettings() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(settings)); } catch (_) { /* ignore */ }
@@ -50,17 +53,19 @@ renderer.toneMappingExposure = 1.05;
 const useShadows = quality !== 'low';
 renderer.shadowMap.enabled = useShadows;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+let dynScale = 1; // automatic resolution scaling when the frame rate drops
 function pixelRatio() {
   const cap = { low: 1.25, medium: 1.6, high: 2 }[settings.quality] || 1.25;
-  return Math.min(window.devicePixelRatio || 1, cap);
+  return Math.min(window.devicePixelRatio || 1, cap) * dynScale;
 }
 renderer.setPixelRatio(pixelRatio());
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0x0b0e1e, 140, 420);
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 900);
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1200);
 
-scene.add(new THREE.HemisphereLight(0xc4d6ff, 0x20202e, 1.5));
+const hemi = new THREE.HemisphereLight(0xc4d6ff, 0x20202e, 1.5);
+scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffffff, 2.2);
 sun.position.set(30, 60, 20);
 scene.add(sun);
@@ -69,7 +74,7 @@ if (useShadows) {
   const sz = quality === 'high' ? 2048 : 1024;
   sun.shadow.mapSize.set(sz, sz);
   const sc = sun.shadow.camera;
-  sc.left = -52; sc.right = 52; sc.top = 62; sc.bottom = -62; sc.near = 10; sc.far = 160;
+  sc.left = -52; sc.right = 52; sc.top = 62; sc.bottom = -62; sc.near = 10; sc.far = 220;
   sun.shadow.bias = -0.0008;
   sun.shadow.normalBias = 0.03;
   sun.target.position.set(0, 0, 0);
@@ -79,16 +84,16 @@ const fill = new THREE.DirectionalLight(0x8fa4ff, 0.7);
 fill.position.set(-30, 25, -40);
 scene.add(fill);
 
-// environment map for nice reflections on cars & ball
-{
+const pmrem = new THREE.PMREMGenerator(renderer);
+let envTex = null;
+function buildEnvironment(T) {
   const env = new THREE.Scene();
-  const box = new THREE.Mesh(new THREE.BoxGeometry(100, 100, 100), new THREE.MeshBasicMaterial({ color: 0x1a2140, side: THREE.BackSide }));
-  env.add(box);
-  const floorEnv = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshBasicMaterial({ color: 0x15301c }));
+  env.add(new THREE.Mesh(new THREE.BoxGeometry(100, 100, 100), new THREE.MeshBasicMaterial({ color: T.env.box, side: THREE.BackSide })));
+  const floorEnv = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshBasicMaterial({ color: T.env.floor }));
   floorEnv.rotation.x = -Math.PI / 2;
   floorEnv.position.y = -20;
   env.add(floorEnv);
-  const lightMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const lightMat = new THREE.MeshBasicMaterial({ color: T.env.panels });
   for (let i = 0; i < 4; i++) {
     const p = new THREE.Mesh(new THREE.PlaneGeometry(20, 8), lightMat);
     const a = i * Math.PI / 2 + Math.PI / 4;
@@ -100,13 +105,44 @@ scene.add(fill);
   blueP.position.set(0, -5, -49); env.add(blueP);
   const redP = new THREE.Mesh(new THREE.PlaneGeometry(60, 6), new THREE.MeshBasicMaterial({ color: TEAM_COLORS[1].main }));
   redP.position.set(0, -5, 49); redP.rotation.y = Math.PI; env.add(redP);
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  scene.environment = pmrem.fromScene(env, 0.04).texture;
+  if (envTex) envTex.dispose();
+  envTex = pmrem.fromScene(env, 0.04).texture;
+  scene.environment = envTex;
   scene.environmentIntensity = 0.8;
-  pmrem.dispose();
+  env.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
 }
 
-const arena = buildArena(scene, renderer, quality);
+// ---------- maps ----------
+let arena = null;
+let booted = false;
+let mapId = null;
+function loadMap(id) {
+  const T = getMap(id);
+  if (mapId === T.id && arena) return;
+  if (arena) arena.dispose();
+  mapId = T.id;
+  arena = buildArena(scene, renderer, quality, T);
+  scene.fog.color.set(T.fog.color);
+  scene.fog.near = T.fog.near;
+  scene.fog.far = T.fog.far;
+  const l = T.light;
+  hemi.color.set(l.hemiSky); hemi.groundColor.set(l.hemiGround); hemi.intensity = l.hemi;
+  sun.color.set(l.sun); sun.intensity = l.sunI; sun.position.set(...l.sunPos);
+  fill.color.set(l.fill); fill.intensity = l.fillI;
+  renderer.toneMappingExposure = l.exposure;
+  buildEnvironment(T);
+  if (booted) {
+    game.arena = arena;
+    game.jumboDirty = true;
+    onResize();
+  }
+}
+function resolveMap(id) {
+  if (id && id !== 'random') return id;
+  return MAPS[(Math.random() * MAPS.length) | 0].id;
+}
+loadMap(resolveMap(settings.map));
+
 const padsView = new BoostPadsView(scene);
 const particles = new Particles(scene, quality === 'high' ? 2600 : 1400);
 const audio = new Audio();
@@ -114,6 +150,7 @@ const hud = new Hud();
 const input = new Input($('controls'));
 const rig = new CameraRig(camera);
 const game = new Game({ scene, rig, audio, particles, hud, input, arena, padsView, quality, shadows: useShadows });
+booted = true;
 
 // bloom for the neon look (highest quality only)
 let composer = null;
@@ -121,7 +158,7 @@ let bloom = null;
 if (quality === 'high') {
   composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
-  bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.55, 0.45, 0.82);
+  bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.5, 0.45, 0.85);
   composer.addPass(bloom);
   composer.addPass(new OutputPass());
 }
@@ -133,8 +170,10 @@ function applySettings() {
   input.settings.steerCurve = +settings.steerCurve || 1.3;
   document.body.classList.toggle('btn-small', settings.btnSize === 'small');
   document.body.classList.toggle('btn-large', settings.btnSize === 'large');
-  if (game.player) game.player.assist = !!+settings.assist;
+  document.body.classList.toggle('no-minimap', !+settings.minimap);
+  if (game.player) { game.player.assist = !!+settings.assist; game.player.latchPitch = !!+settings.assist; }
   audio.setEnabled(!!+settings.sound);
+  audio.setVolumes(settings.musicVol / 100, settings.sfxVol / 100);
   rig.distance = +settings.camDist;
   rig.height = 1.2 + rig.distance * 0.1;
   renderer.setPixelRatio(pixelRatio());
@@ -145,6 +184,7 @@ function applySettings() {
 // ---------- resize ----------
 function onResize() {
   const w = window.innerWidth, h = window.innerHeight;
+  renderer.setPixelRatio(pixelRatio());
   renderer.setSize(w, h);
   if (composer) {
     composer.setPixelRatio(renderer.getPixelRatio());
@@ -154,7 +194,7 @@ function onResize() {
   rig.setFov(w / h);
   const buf = renderer.getDrawingBufferSize(new THREE.Vector2());
   particles.setScale(buf.y, camera.fov);
-  arena.crowdMat.uniforms.scale.value = buf.y / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
+  if (arena && arena.crowdMat) arena.crowdMat.uniforms.scale.value = buf.y / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
   input.layout();
 }
 window.addEventListener('resize', onResize);
@@ -174,6 +214,7 @@ function showScreen(name) {
   syncSegments();
   if (name === 'garage') enterGarage();
   else if (appMode === 'garage') exitGarage();
+  if (name === 'main') refreshProfile();
 }
 function hideScreens() {
   for (const s of screens) $('screen-' + s).classList.add('hidden');
@@ -185,6 +226,8 @@ function syncSegments() {
     const opt = seg.dataset.opt;
     seg.querySelectorAll('button').forEach(b => b.classList.toggle('sel', String(settings[opt]) === b.dataset.val));
   });
+  document.querySelectorAll('input[data-range]').forEach(r => { r.value = settings[r.dataset.range]; });
+  document.querySelectorAll('.map-grid').forEach(g => g.querySelectorAll('.map-card').forEach(c => c.classList.toggle('sel', c.dataset.map === settings.map)));
 }
 
 function setupSegments() {
@@ -201,27 +244,49 @@ function setupSegments() {
       saveSettings();
       audio.init();
       audio.click();
-      if (opt === 'quality') $('quality-note').textContent = 'Laad de pagina opnieuw om de graphics volledig aan te passen.';
-      if (opt === 'body' || opt === 'paint') refreshPreview();
+      if (opt === 'quality') $('quality-note').textContent = 'Reload the page to fully apply the graphics change.';
       applySettings();
     });
   });
-  const paints = $('paints');
-  PAINTS.forEach((p, i) => {
-    const el = document.createElement('div');
-    el.className = 'paint' + (p.color == null ? ' team' : '');
-    if (p.color != null) el.style.background = '#' + p.color.toString(16).padStart(6, '0');
-    el.innerHTML = `<span>${p.name}</span>`;
-    el.addEventListener('click', () => {
-      settings.paint = i;
+  document.querySelectorAll('input[data-range]').forEach(r => {
+    r.addEventListener('input', () => {
+      settings[r.dataset.range] = +r.value;
+      audio.init();
+      applySettings();
       saveSettings();
-      audio.click();
-      paints.querySelectorAll('.paint').forEach((x, j) => x.classList.toggle('sel', j === i));
-      refreshPreview();
     });
-    if (i === settings.paint) el.classList.add('sel');
-    paints.appendChild(el);
   });
+  // map pickers
+  const cards = [{ id: 'random', name: 'Random' }, ...MAPS];
+  document.querySelectorAll('.map-grid[data-maps]').forEach(grid => {
+    grid.innerHTML = cards.map(m => {
+      const p = m.preview;
+      const sky = p ? `background: linear-gradient(180deg, ${p[0]}, ${p[1]})` : '';
+      const field = p ? `background: repeating-linear-gradient(90deg, ${p[2]} 0 10px, ${shade(p[2])} 10px 20px)` : 'background:#2a3350';
+      return `<button class="map-card${m.id === 'random' ? ' random' : ''}" data-map="${m.id}" title="${m.desc || 'Surprise me'}"><i class="sky" style="${sky}"></i><i class="field" style="${field}"></i><span>${m.name}</span></button>`;
+    }).join('');
+    grid.addEventListener('click', e => {
+      const c = e.target.closest('.map-card');
+      if (!c) return;
+      settings.map = c.dataset.map;
+      saveSettings();
+      audio.init(); audio.click();
+      syncSegments();
+      if (session && session.isHost) broadcastLobby();
+    });
+  });
+  // hover blips on desktop
+  document.addEventListener('pointerover', e => {
+    if (e.pointerType !== 'mouse') return;
+    const t = e.target.closest('.btn, .tile, .chip, .map-card, .g-item, .seg button');
+    if (t && t !== lastHover) { lastHover = t; audio.hover(); }
+  });
+}
+let lastHover = null;
+function shade(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.max(0, (n >> 16) - 18), g = Math.max(0, ((n >> 8) & 255) - 18), b = Math.max(0, (n & 255) - 18);
+  return `rgb(${r},${g},${b})`;
 }
 
 document.addEventListener('click', e => {
@@ -230,18 +295,12 @@ document.addEventListener('click', e => {
   const back = e.target.closest('[data-back]');
   if (go || act || back) { audio.init(); audio.click(); }
   if (go) showScreen(go.dataset.go);
-  if (back) showScreen(previous === 'settings' ? 'main' : previous);
+  if (back) showScreen(previous === 'settings' || previous === 'help' || !previous ? (appMode === 'match' ? 'pause' : 'main') : previous);
   if (!act) return;
   switch (act.dataset.action) {
-    case 'start':
-      startMatch({ mode: 'match' });
-      break;
-    case 'training':
-      startMatch({ mode: 'training' });
-      break;
-    case 'resume':
-      resume();
-      break;
+    case 'start': startMatch({ mode: 'match' }); break;
+    case 'training': startMatch({ mode: 'training' }); break;
+    case 'resume': resume(); break;
     case 'restart':
       if (session) { if (session.isHost) hostStartMatch(); }
       else if (lastMatch) startMatch(lastMatch);
@@ -259,24 +318,62 @@ document.addEventListener('click', e => {
   }
 });
 
-// ---------- garage preview ----------
+function refreshProfile() {
+  $('profile-name').textContent = settings.name || 'Player';
+  $('profile-car').textContent = BODY_TYPES[settings.look.body % BODY_TYPES.length].name;
+}
+
+// ---------- garage ----------
 let preview = null;
 let previewSpin = 0;
+let garageTab = 'body';
 function refreshPreview() {
   if (appMode !== 'garage') return;
   if (preview) scene.remove(preview.root);
-  const paint = PAINTS[settings.paint] ? PAINTS[settings.paint].color : null;
-  preview = buildCarMesh(0, settings.body, paint, quality);
+  preview = buildCarMesh(0, settings.look, quality);
   preview.root.position.set(0, 0.38, 0);
-  preview.root.scale.setScalar(1);
+  preview.flames.visible = garageTab === 'boost';
   scene.add(preview.root);
 }
+const GARAGE = {
+  body: { list: BODY_TYPES, key: 'body', item: (b) => `<span class="ico">🏎</span>${b.name}`, desc: (b) => b.desc },
+  paint: { list: PAINTS, key: 'paint', item: (p) => `<i class="sw ${p.color == null ? 'team' : ''}" style="${p.color == null ? '' : 'background:#' + p.color.toString(16).padStart(6, '0')}"></i>${p.name}`, desc: (p) => p.color == null ? 'Uses your team colour' : 'Custom paint' },
+  wheel: { list: WHEELS, key: 'wheel', item: (w) => `<span class="ico">⚙</span>${w.name}`, desc: () => 'Rims' },
+  boost: { list: BOOSTS, key: 'boost', item: (b) => `<i class="sw ${b.outer == null ? 'team' : ''}" style="${b.outer == null ? '' : 'background:radial-gradient(circle,#fff,#' + b.outer.toString(16).padStart(6, '0') + ')'}"></i>${b.name}`, desc: () => 'Boost trail colour' },
+  decal: { list: DECALS, key: 'decal', item: (d) => `<span class="ico">${['∅', '║', '⚡', '#', '◧'][DECALS.indexOf(d)] || '•'}</span>${d.name}`, desc: () => 'Body decal' },
+};
+function renderGarage() {
+  const g = GARAGE[garageTab];
+  const sel = settings.look[g.key] | 0;
+  $('garage-items').innerHTML = g.list.map((it, i) => `<button class="g-item${i === sel ? ' sel' : ''}" data-i="${i}">${g.item(it)}</button>`).join('');
+  $('garage-title').textContent = g.list[sel].name;
+  $('garage-desc').textContent = g.desc(g.list[sel]);
+  document.querySelectorAll('#garage-tabs button').forEach(b => b.classList.toggle('sel', b.dataset.tab === garageTab));
+}
+$('garage-tabs').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  garageTab = b.dataset.tab;
+  audio.click();
+  renderGarage();
+  refreshPreview();
+});
+$('garage-items').addEventListener('click', e => {
+  const b = e.target.closest('.g-item');
+  if (!b) return;
+  settings.look = { ...settings.look, [GARAGE[garageTab].key]: +b.dataset.i };
+  saveSettings();
+  audio.click();
+  renderGarage();
+  refreshPreview();
+});
 function enterGarage() {
   appMode = 'garage';
   game.paused = true;
   for (const v of game.views.values()) v.root.visible = false;
   game.ballView.group.visible = false;
   game.ballShadow.visible = false;
+  renderGarage();
   refreshPreview();
   rig.snap();
 }
@@ -287,7 +384,7 @@ function exitGarage() {
 }
 
 // ---------- match flow ----------
-function startMatch(opts, setupOverride = null) {
+function startMatch(opts, setupOverride = null, map = null) {
   audio.init();
   if (isTouch && document.documentElement.requestFullscreen && !document.fullscreenElement) {
     document.documentElement.requestFullscreen({ navigationUI: 'hide' })
@@ -298,34 +395,37 @@ function startMatch(opts, setupOverride = null) {
   appMode = 'match';
   lastMatch = opts;
   hideScreens();
-  const paint = PAINTS[settings.paint] ? PAINTS[settings.paint].color : null;
+  loadMap(map || resolveMap(settings.map));
   game.paused = false;
   game.setup(setupOverride || {
     mode: opts.mode,
     teamSize: settings.teamSize,
     difficulty: settings.difficulty,
     duration: settings.duration,
-    body: settings.body,
-    paint,
+    look: settings.look,
+    playerName: settings.name || 'You',
     replays: !!+settings.replays,
   });
   game.net = session ? session.net : null;
-  if (game.player) game.player.assist = !!+settings.assist;
+  if (game.player) { game.player.assist = !!+settings.assist; game.player.latchPitch = !!+settings.assist; }
   rig.ballCam = !!+settings.ballCam;
-  $('btn-cam').classList.toggle('active', rig.ballCam);
+  updateCamButton();
+  const ts = game.opts.teamSize;
+  hud.setMode(opts.mode === 'training' ? 'PRACTICE' : `${session ? 'ONLINE · ' : ''}${ts} V ${ts}`);
   hud.setScore(0, 0);
   hud.clearMessage();
+  hud.clearLabels();
   hud.show(true);
   $('controls').classList.remove('hidden');
   input.enabled = true;
   input.reset();
   document.body.classList.add('in-match');
+  audio.playMusic('match');
 }
 
 function pause() {
   if (appMode !== 'match' || game.state === 'ended' || game.paused || current === 'pause') return;
-  // online matches keep running for everybody
-  if (!session) game.paused = true;
+  if (!session) game.paused = true; // online matches keep running for everybody
   input.enabled = false;
   input.reset();
   audio.updateEngine(0, 0, false, false);
@@ -339,6 +439,11 @@ function resume() {
 }
 function quitToMenu() {
   if (session) leaveSession();
+  quitMatchView();
+  showScreen('main');
+}
+
+function quitMatchView() {
   appMode = 'menu';
   game.paused = false;
   hud.show(false);
@@ -347,13 +452,14 @@ function quitToMenu() {
   document.body.classList.remove('in-match', 'replay');
   input.enabled = false;
   audio.updateEngine(0, 0, false, false);
+  game.net = null;
   startAttract();
-  showScreen('main');
 }
 
 function startAttract() {
   game.setup({ mode: 'attract', teamSize: 2, difficulty: 'hard', duration: 0, replays: false });
   rig.ballCam = true;
+  audio.playMusic('menu');
 }
 
 game.onEnd = (res) => {
@@ -368,7 +474,7 @@ function showEnd(res) {
   const my = res.playerTeam;
   const won = res.score[my] > res.score[1 - my];
   const title = $('end-title');
-  title.textContent = won ? 'OVERWINNING!' : 'NEDERLAAG';
+  title.textContent = won ? 'VICTORY' : 'DEFEAT';
   title.className = won ? 'win' : 'loss';
   $('end-score').innerHTML = `<span class="t0">${res.score[0]}</span> – <span class="t1">${res.score[1]}</span>`;
   const winner = res.score[0] > res.score[1] ? 0 : 1;
@@ -376,12 +482,12 @@ function showEnd(res) {
   let mvp = null;
   for (const c of res.cars) if (c.team === winner && (!mvp || c.points > mvp.points)) mvp = c;
   const tbody = $('end-table').querySelector('tbody');
-  tbody.innerHTML = sorted.map(c => `<tr class="t${c.team}${c.isPlayer ? ' me' : ''}"><td>${c.name}${c === mvp ? '<span class="mvp">★ MVP</span>' : ''}</td><td>${c.points}</td><td>${c.goals}</td><td>${c.assists}</td><td>${c.saves}</td><td>${c.shots}</td></tr>`).join('');
+  tbody.innerHTML = sorted.map(c => `<tr class="t${c.team}${c.isPlayer ? ' me' : ''}"><td>${escapeHtml(c.name)}${c === mvp ? '<span class="mvp">★ MVP</span>' : ''}</td><td>${c.points}</td><td>${c.goals}</td><td>${c.assists}</td><td>${c.saves}</td><td>${c.shots}</td></tr>`).join('');
   hud.clearMessage();
   const online = !!session;
   $('btn-end-again').classList.toggle('hidden', online && !session.isHost);
-  $('btn-end-quit').textContent = online ? (session.isHost ? 'LOBBY' : 'VERLATEN') : 'HOOFDMENU';
-  $('end-note').textContent = online && !session.isHost ? 'Wachten tot de host een nieuwe wedstrijd start…' : '';
+  $('btn-end-quit').textContent = online ? (session.isHost ? 'LOBBY' : 'LEAVE') : 'MAIN MENU';
+  $('end-note').textContent = online && !session.isHost ? 'Waiting for the host to start another match…' : '';
   showScreen('end');
 }
 
@@ -392,11 +498,15 @@ game.onStateChange = (s) => {
 
 $('btn-pause').addEventListener('click', () => { audio.click(); pause(); });
 $('btn-cam').addEventListener('click', () => toggleBallCam());
+function updateCamButton() {
+  $('btn-cam').classList.toggle('active', rig.ballCam);
+  $('cam-state').textContent = rig.ballCam ? 'ON' : 'OFF';
+}
 function toggleBallCam() {
   rig.ballCam = !rig.ballCam;
   settings.ballCam = rig.ballCam ? 1 : 0;
   saveSettings();
-  $('btn-cam').classList.toggle('active', rig.ballCam);
+  updateCamButton();
 }
 input.on('ballcam', () => { if (appMode === 'match') toggleBallCam(); });
 input.on('pause', () => {
@@ -411,14 +521,12 @@ document.addEventListener('visibilitychange', () => { if (document.hidden && !se
 $('btn-rotate-ignore').addEventListener('click', () => document.body.classList.add('ignore-rotate'));
 
 // ---------- online multiplayer ----------
-let session = null; // { net, isHost, players: [{id,name,team,body,paint}], inMatch }
-const lobbyEl = (id) => $(id);
+let session = null; // { net, isHost, players: [{id,name,team,look}], inMatch }
 
 function playerName() {
   const n = ($('player-name').value || settings.name || '').trim().slice(0, 14);
-  return n || 'Speler';
+  return n || 'Player';
 }
-function myPaint() { return PAINTS[settings.paint] ? PAINTS[settings.paint].color : null; }
 function setOnlineStatus(t) { $('online-status').textContent = t || ''; }
 
 function newSession(isHost) {
@@ -427,15 +535,14 @@ function newSession(isHost) {
   document.body.classList.toggle('net-host', isHost);
   document.body.classList.toggle('net-guest', !isHost);
   net.on('message', (from, msg) => onNetMessage(from, msg));
-  net.on('join', () => {});
   net.on('leave', (id) => onPeerLeft(id));
   net.on('hostlost', () => {
     if (!session) return;
     const wasMatch = appMode === 'match';
     leaveSession();
-    if (wasMatch) quitToMenu();
+    if (wasMatch) quitMatchView();
     showScreen('online');
-    setOnlineStatus('De host heeft het spel verlaten.');
+    setOnlineStatus('The host left the game.');
   });
   net.on('error', (e) => setOnlineStatus(errorText(e)));
   return session;
@@ -452,7 +559,7 @@ function leaveSession() {
 
 async function hostRoom() {
   settings.name = playerName(); saveSettings();
-  setOnlineStatus('Kamer maken…');
+  setOnlineStatus('Creating room…');
   leaveSession();
   const sess = newSession(true);
   try {
@@ -462,7 +569,8 @@ async function hostRoom() {
     setOnlineStatus(errorText(e));
     return;
   }
-  sess.players = [{ id: 'host', name: playerName(), team: 0, body: settings.body, paint: myPaint() }];
+  sess.players = [{ id: 'host', name: playerName(), team: 0, look: settings.look }];
+  if (settings.map === 'random') settings.map = resolveMap('random');
   setOnlineStatus('');
   renderLobby();
   showScreen('lobby');
@@ -470,9 +578,9 @@ async function hostRoom() {
 
 async function joinRoom(code) {
   code = cleanCode(code);
-  if (code.length !== 5) { setOnlineStatus('Vul een code van 5 tekens in.'); return; }
+  if (code.length !== 5) { setOnlineStatus('Enter a 5-character code.'); return; }
   settings.name = playerName(); saveSettings();
-  setOnlineStatus('Verbinden met ' + code + '…');
+  setOnlineStatus('Connecting to ' + code + '…');
   leaveSession();
   const sess = newSession(false);
   try {
@@ -482,12 +590,12 @@ async function joinRoom(code) {
     setOnlineStatus(errorText(e));
     return;
   }
-  sess.net.send('host', { t: 'hello', name: playerName(), body: settings.body, paint: myPaint() });
-  setOnlineStatus('Verbonden! Wachten op de lobby…');
+  sess.net.send('host', { t: 'hello', name: playerName(), look: settings.look });
+  setOnlineStatus('Connected! Waiting for the lobby…');
 }
 
 function lobbyMessage() {
-  return { t: 'lobby', code: session.net.code, players: session.players, opts: { teamSize: settings.teamSize, difficulty: settings.difficulty, duration: settings.duration } };
+  return { t: 'lobby', code: session.net.code, players: session.players, opts: { teamSize: settings.teamSize, difficulty: settings.difficulty, duration: settings.duration, map: settings.map } };
 }
 function broadcastLobby() {
   if (!session || !session.isHost) return;
@@ -508,6 +616,7 @@ function renderLobby(msg) {
   $('room-code').textContent = msg ? msg.code : session.net.code;
   if (msg && !session.isHost) {
     settings.teamSize = msg.opts.teamSize; settings.difficulty = msg.opts.difficulty; settings.duration = msg.opts.duration;
+    if (msg.opts.map) settings.map = msg.opts.map;
     syncSegments();
   }
   for (const team of [0, 1]) {
@@ -519,8 +628,8 @@ function renderLobby(msg) {
   }
   const humans = players.length;
   $('lobby-status').textContent = session.isHost
-    ? (humans > 1 ? `${humans} spelers in de kamer. Klaar? Druk op START.` : 'Wachten op vrienden… je kunt ook alvast starten tegen bots.')
-    : 'Wachten tot de host de wedstrijd start…';
+    ? (humans > 1 ? `${humans} players in the room. Ready? Press START.` : 'Waiting for friends… you can also start against bots.')
+    : 'Waiting for the host to start the match…';
 }
 
 function escapeHtml(t) {
@@ -530,9 +639,9 @@ function escapeHtml(t) {
 function shareRoom() {
   if (!session) return;
   const url = location.origin + location.pathname + '?join=' + session.net.code;
-  const text = `Doe mee met mijn Nitro Strikers-wedstrijd! Code: ${session.net.code}`;
+  const text = `Join my Nitro Strikers match! Code: ${session.net.code}`;
   if (navigator.share) navigator.share({ title: 'Nitro Strikers', text, url }).catch(() => {});
-  else if (navigator.clipboard) navigator.clipboard.writeText(url).then(() => { $('share-note').textContent = 'Link gekopieerd!'; }).catch(() => { $('share-note').textContent = url; });
+  else if (navigator.clipboard) navigator.clipboard.writeText(url).then(() => { $('share-note').textContent = 'Link copied!'; }).catch(() => { $('share-note').textContent = url; });
   else $('share-note').textContent = url;
 }
 
@@ -559,7 +668,7 @@ function onPeerLeft(id) {
   session.players = session.players.filter(x => x.id !== id);
   if (session.inMatch) {
     game.dropRemote(id);
-    if (p) hud.feed(`${escapeHtml(p.name)} heeft het spel verlaten`);
+    if (p) hud.feed(`${escapeHtml(p.name)} left the match`);
   }
   broadcastLobby();
 }
@@ -574,8 +683,8 @@ function onNetMessage(from, msg) {
         const c0 = session.players.filter(p => p.team === 0).length, c1 = session.players.filter(p => p.team === 1).length;
         if (c0 >= 3 && c1 >= 3) { session.net.send(from, { t: 'full' }); return; }
         const team = c0 <= c1 ? 0 : 1;
-        const name = String(msg.name || 'Speler').replace(/[<>&"'`]/g, '').slice(0, 14) || 'Speler';
-        session.players.push({ id: from, name, team, body: (msg.body | 0) % 3, paint: typeof msg.paint === 'number' ? msg.paint : null });
+        const name = String(msg.name || 'Player').replace(/[<>&"'`]/g, '').slice(0, 14) || 'Player';
+        session.players.push({ id: from, name, team, look: Game.cleanLook(msg.look) });
         const n = session.players.filter(p => p.team === team).length;
         if (n > settings.teamSize) { settings.teamSize = n; syncSegments(); }
         session.net.send(from, { t: 'welcome', id: from });
@@ -606,8 +715,8 @@ function onNetMessage(from, msg) {
     case 'start': guestStartMatch(msg); break;
     case 's': if (appMode === 'match' && game.role === 'client') game.receiveSnapshot(msg); break;
     case 'e': if (appMode === 'match' && game.role === 'client') game.applyFx(msg.e); break;
-    case 'busy': leaveSession(); setOnlineStatus('Er wordt al gespeeld in deze kamer. Probeer het straks opnieuw.'); break;
-    case 'full': leaveSession(); setOnlineStatus('Deze kamer is vol.'); break;
+    case 'busy': leaveSession(); setOnlineStatus('A match is already running in this room. Try again in a bit.'); break;
+    case 'full': leaveSession(); setOnlineStatus('This room is full.'); break;
     case 'tolobby':
       quitMatchView();
       if (session.lastLobby) renderLobby(session.lastLobby);
@@ -622,8 +731,8 @@ function buildRoster() {
   const roster = [];
   for (const team of [0, 1]) {
     const humans = session.players.filter(p => p.team === team);
-    for (const h of humans) roster.push({ team, name: h.name, owner: h.id, body: h.body, paint: h.paint });
-    for (let i = humans.length; i < settings.teamSize; i++) roster.push({ team, name: names.pop(), owner: null, body: (Math.random() * 3) | 0, paint: null });
+    for (const h of humans) roster.push({ team, name: h.name, owner: h.id, look: h.look });
+    for (let i = humans.length; i < settings.teamSize; i++) roster.push({ team, name: names.pop(), owner: null, look: Game.randomLook() });
   }
   return roster;
 }
@@ -639,28 +748,17 @@ function onlineSetup(roster, opts, role, localOwner) {
 function hostStartMatch() {
   if (!session || !session.isHost) return;
   const roster = buildRoster();
+  const map = resolveMap(settings.map);
   const opts = { teamSize: settings.teamSize, difficulty: settings.difficulty, duration: settings.duration };
   session.inMatch = true;
-  session.net.broadcast({ t: 'start', roster, opts });
-  startMatch({ mode: 'online' }, onlineSetup(roster, opts, 'host', 'host'));
+  session.net.broadcast({ t: 'start', roster, opts, map });
+  startMatch({ mode: 'online' }, onlineSetup(roster, opts, 'host', 'host'), map);
 }
 
 function guestStartMatch(msg) {
   if (current === 'pause') hideScreens();
   session.inMatch = true;
-  startMatch({ mode: 'online' }, onlineSetup(msg.roster, msg.opts, 'client', session.myId));
-}
-
-function quitMatchView() {
-  appMode = 'menu';
-  hud.show(false);
-  hud.clearMessage();
-  $('controls').classList.add('hidden');
-  document.body.classList.remove('in-match', 'replay');
-  input.enabled = false;
-  audio.updateEngine(0, 0, false, false);
-  game.net = null;
-  startAttract();
+  startMatch({ mode: 'online' }, onlineSetup(msg.roster, msg.opts, 'client', session.myId), msg.map);
 }
 
 function hostBackToLobby() {
@@ -674,33 +772,55 @@ function hostBackToLobby() {
 // ---------- main loop ----------
 let last = performance.now();
 let elapsed = 0;
+let frameAvg = 16;
+let scaleTimer = 0;
 const _target = new THREE.Vector3();
 const _from = new THREE.Vector3();
 
 function frame(now) {
   requestAnimationFrame(frame);
-  const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
+  const rawDt = Math.max(0, (now - last) / 1000);
+  const dt = Math.min(0.05, rawDt);
   last = now;
   elapsed += dt;
+  adaptResolution(rawDt, dt);
 
   if (appMode === 'garage') {
-    previewSpin += dt * 0.5;
-    _target.set(0, 0.5, 0);
-    const r = 4.2;
-    _from.set(Math.sin(previewSpin) * r, 1.6, Math.cos(previewSpin) * r);
+    previewSpin += dt * 0.4;
+    const r = 3.6;
+    _from.set(Math.sin(previewSpin) * r, 1.25, Math.cos(previewSpin) * r);
+    // aim slightly to the left of the car so it sits on the right, clear of the menu
+    const rx = Math.cos(previewSpin), rz = -Math.sin(previewSpin);
+    const off = window.innerWidth > window.innerHeight ? 1.15 : 0;
+    _target.set(-rx * off, 0.45, -rz * off);
     rig.cinematic(_target, _from, dt, 6);
     if (preview) {
       for (const w of preview.wheels) w.spin.rotation.x += dt * 2;
+      if (preview.flames.visible) preview.flames.scale.set(1, 1, 0.85 + Math.random() * 0.4);
     }
     padsView.update(game.pads, elapsed);
+    if (arena.update) arena.update(dt, elapsed, camera);
   } else {
     game.update(dt);
+    if (game.state !== 'replay') game.computeRenderState();
     updateCamera(dt);
     game.render(dt, elapsed);
     if (appMode === 'match') updateHud(dt);
   }
   particles.update(dt);
   if (composer) composer.render(); else renderer.render(scene, camera);
+}
+
+function adaptResolution(rawDt, dt) {
+  if (rawDt > 0.25) return; // tab switch etc.
+  frameAvg += (rawDt * 1000 - frameAvg) * 0.05;
+  scaleTimer += dt;
+  if (scaleTimer < 2) return;
+  scaleTimer = 0;
+  let next = dynScale;
+  if (frameAvg > 24 && dynScale > 0.6) next = Math.max(0.6, dynScale - 0.1);
+  else if (frameAvg < 15 && dynScale < 1) next = Math.min(1, dynScale + 0.05);
+  if (next !== dynScale) { dynScale = next; onResize(); }
 }
 
 let attractTimer = 0;
@@ -715,8 +835,8 @@ function updateCamera(dt) {
       attractFollow = Math.random() < 0.65 && choices.length ? choices[(Math.random() * choices.length) | 0] : null;
       rig.snap();
     }
-    if (attractFollow && !attractFollow.demolished && st !== 'goal') rig.follow(attractFollow, attractFollow.pos, game.ball.pos, dt);
-    else rig.orbit(game.ball.pos, dt);
+    if (attractFollow && !attractFollow.demolished && st !== 'goal') rig.follow(attractFollow, attractFollow.renderPos, game.ball.renderPos, dt);
+    else rig.orbit(game.ball.renderPos, dt);
     return;
   }
   if (st === 'replay') {
@@ -735,17 +855,18 @@ function updateCamera(dt) {
     return;
   }
   const p = game.player;
-  if (p && !p.demolished) rig.follow(p, p.pos, game.ball.pos, dt);
+  if (p && !p.demolished) rig.follow(p, p.renderPos, game.ball.renderPos, dt);
   else {
     _from.copy(rig.pos);
-    rig.cinematic(game.ball.pos, _from, dt, 2);
+    rig.cinematic(game.ball.renderPos, _from, dt, 2);
   }
 }
 
 function updateHud(dt) {
   hud.update(dt);
   hud.setScore(game.score[0], game.score[1]);
-  hud.setClock(game.clockText(), game.overtime);
+  hud.setClock(game.clockText(), game.overtime, game.opts.mode === 'match' ? game.timeLeft : undefined);
+  hud.setTeams(game.cars);
   const p = game.player;
   if (p) {
     hud.setBoost(p.boost, p.unlimitedBoost);
@@ -753,7 +874,9 @@ function updateHud(dt) {
     const active = (game.state === 'playing' || game.state === 'goal') && !game.paused && !p.demolished;
     audio.updateEngine(p.speed(), p.controls.throttle, p.boosting, active);
   }
-  hud.updateLabels(game.cars, camera, game.state === 'replay' ? null : p, game.ball.pos, !rig.ballCam && game.state === 'playing');
+  const replay = game.state === 'replay';
+  hud.updateLabels(game.cars, camera, replay ? null : p, game.ball.renderPos, !rig.ballCam && game.state === 'playing');
+  if (+settings.minimap && !replay) hud.drawMinimap(game.cars, game.ball.hidden ? null : game.ball.renderPos, p, dt);
 }
 
 // ---------- boot ----------
@@ -763,14 +886,18 @@ for (const id of ['player-name', 'join-code']) {
   $(id).addEventListener('keydown', (e) => e.stopPropagation());
   $(id).addEventListener('keyup', (e) => e.stopPropagation());
 }
+$('player-name').addEventListener('change', () => { settings.name = playerName(); saveSettings(); refreshProfile(); });
 setupSegments();
 applySettings();
 startAttract();
 showScreen('main');
 {
   const joinCode = cleanCode(new URLSearchParams(location.search).get('join'));
-  if (joinCode) { $('join-code').value = joinCode; showScreen('online'); setOnlineStatus('Vul je naam in en druk op MEEDOEN.'); }
+  if (joinCode) { $('join-code').value = joinCode; showScreen('online'); setOnlineStatus('Enter your name and press JOIN.'); }
 }
+// start the menu music on the first interaction (browsers block audio before that)
+window.addEventListener('pointerdown', () => audio.init(), { once: true });
+window.addEventListener('keydown', () => audio.init(), { once: true });
 requestAnimationFrame((t) => { last = t; frame(t); });
 setTimeout(() => $('loading').classList.add('done'), 150);
 
@@ -779,4 +906,4 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
 }
 
 // handy for debugging from the console
-window.__nitro = { game, rig, settings, renderer, get session() { return session; } };
+window.__nitro = { game, rig, settings, renderer, loadMap, get session() { return session; } };

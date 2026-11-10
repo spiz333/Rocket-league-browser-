@@ -1,86 +1,71 @@
 # Nitro Strikers
 
-Een 3D auto-voetbalspel voor de (mobiele) browser: raketauto's, een grote bal, boost, sprongen, flips en rijden over muren — speelbaar op je telefoon met aanraakbediening, of op de computer met toetsenbord of controller. Speel tegen bots of **online met vrienden**.
+A 3D rocket-car soccer game for the (mobile) browser: boost, jumps, flips, wall driving, bots, online play with friends, seven arenas, a garage and procedurally generated music. Everything — cars, ball, arenas, UI, sound and music — is original and generated in code, so no asset downloads are needed.
 
-Alles is eigen werk: de auto's, de arena, de bal, de interface en de geluiden (die worden live gegenereerd met WebAudio). Er zijn geen externe assets nodig.
+## Play
 
-## Spelen
-
-Het spel is een statische website. Start een webserver in deze map en open `index.html`:
+It's a static website. Serve this folder and open `index.html`:
 
 ```bash
 python3 -m http.server 8080
-# open http://localhost:8080 (of http://<ip-van-je-computer>:8080 op je telefoon)
+# then open http://localhost:8080 (or http://<your-computer-ip>:8080 on your phone)
 ```
 
-> Openen via `file://` werkt niet, omdat browsers ES-modules alleen via http(s) laden.
+Opening the file directly via `file://` does not work because browsers only load ES modules over http(s).
 
-### Online zetten met GitHub Pages
+### Put it online
 
-1. Ga naar **Settings → Pages** van deze repository.
-2. Kies bij *Source* de branch en de map `/ (root)`.
-3. Na een minuut staat het spel op `https://<gebruiker>.github.io/<repository>/`.
+- **GitHub Pages:** Settings → Pages → deploy from your branch, folder `/ (root)`.
+- **Netlify:** drag the folder onto app.netlify.com/drop, or import the repository (no build command, publish directory `.`).
 
-Op je telefoon kun je het daarna via *Delen → Zet op beginscherm* als app installeren (volledig scherm, liggend). Na het eerste bezoek werkt het ook offline.
+On a phone you can then use *Share → Add to Home Screen* to install it as a full-screen landscape app. After the first visit it also works offline.
 
-## Besturing
+## Controls
 
-| Actie | Telefoon / tablet | Toetsenbord | Controller |
+| Action | Touch | Keyboard | Gamepad |
 | --- | --- | --- | --- |
-| Sturen | linkerduim ergens links op het scherm | A / D of ← → | linker stick |
-| Gas / remmen | automatisch gas; stick omlaag = remmen/achteruit | W / S | RT / LT |
-| Springen (2× = dubbele sprong) | tik op **SPRING** | Spatie | A |
-| Flip | **veeg over SPRING** in de flip-richting (omhoog = voorwaarts) | richting + 2× Spatie | stick + 2× A |
-| Boost | **BOOST** vasthouden | Shift of linkermuisknop | B |
-| Drift / rollen in de lucht | **DRIFT** | Ctrl, Q / E | X, LB / RB |
-| Bal-camera aan/uit | **BAL CAM** | C | Y |
-| Pauze | ❚❚ | Esc / P | Start |
+| Steer | left thumb anywhere on the left | A / D or ← → | left stick |
+| Throttle / brake | automatic throttle; pull the stick down to brake / reverse | W / S | RT / LT |
+| Jump (twice = double jump) | tap **JUMP** | Space | A |
+| Flip | **swipe across JUMP** in the flip direction (up = forward) | direction + Space twice | stick + A twice |
+| Boost | hold **BOOST** | Shift or left mouse | B |
+| Powerslide / air roll | **DRIFT** | Ctrl, Q / E | X, LB / RB |
+| Ball cam on/off | **BALL CAM** | C | Y |
+| Pause | pause button | Esc / P | Start |
 
 Tips:
-- Een veeg over SPRING doet in één beweging een sprong + flip. Ben je al in de lucht, dan wordt het meteen een flip.
-- Schuif met je rechterduim van BOOST naar SPRING (of leg je duim ertussen) om beide tegelijk te gebruiken.
-- In de instellingen kun je de stuurgevoeligheid, knopgrootte en landingshulp aanpassen. De landingshulp draait je auto vlak voor de landing op zijn wielen.
+- One swipe over JUMP does jump + flip in a single motion. In the air it becomes a flip straight away.
+- Slide your right thumb from BOOST onto JUMP to use both at once.
+- With *Assists* on (Settings → Controls), the car lands on its wheels by itself. A stick you were already holding when you took off won't keep spinning the car until you let go of it — no more endless flipping while you hold forward.
 
-## Online spelen
+## Features
 
-1. Kies **🌐 ONLINE SPELEN**, vul je naam in en druk op **KAMER MAKEN**.
-2. Deel de code van 5 tekens (of de link via **LINK DELEN**) met je vrienden.
-3. Zij vullen de code in bij **MEEDOEN**. In de lobby kies je teams, de modus (1v1 / 2v2 / 3v3), het niveau van de bots en de speeltijd. Lege plekken worden bots.
-4. De host drukt op **START**.
+- **Modes:** quick match 1v1 / 2v2 / 3v3 against Casual, Skilled or Elite bots; 2-, 3- or 5-minute matches; practice with unlimited boost; online play.
+- **Online:** create a room, share the 5-letter code (or link), choose teams, mode, bot level, length and arena in the lobby. Empty slots are bots; if someone leaves, a bot takes over their car.
+- **Arenas:** Neon Coliseum (night), Greenfield Park (sunny), Sunset Dunes (desert), Glacier Bowl (snowfall), Skyline Rooftop (rainy city), Starport Zero (space), Coral Bay (beach) — or Random.
+- **Garage:** 5 bodies, 12 paints, 6 wheel designs, 6 boost colours and 5 decals.
+- **Driving:** throttle, brake, powerslide, jump with hold, double jump, flips in every direction, air control, boost in the air, driving on curved walls and the ceiling, automatic recovery when upside down, demolitions at top speed.
+- **Rules:** countdown kickoffs, boost pads (big 100, small 12) that respawn, a goal counts when the ball is fully over the line, time up ends the match when the ball touches the ground, overtime (next goal wins).
+- **Presentation:** goal explosions, slow motion and replays, scoreboard with team indicators, point callouts (shot on target, save, goal, assist, demolition), minimap, name tags with boost bars, end-of-match stats with MVP.
+- **Audio:** synthesized engine with gears, boost, hits, crowd, goal horn, plus two original music loops (menu and match). Separate music and effects volume.
+- **Graphics:** Fast / Nice / Ultra presets (shadows, light beams, clearcoat paint, bloom), automatic resolution scaling when the frame rate drops, smooth rendering between physics steps.
 
-Hoe het werkt: spelers verbinden rechtstreeks met elkaar via WebRTC (met [PeerJS](https://peerjs.com), MIT, meegeleverd in `vendor/`). Alleen voor het vinden van elkaar wordt de gratis publieke PeerJS-server gebruikt; er is dus geen eigen server nodig. De host rekent de wedstrijd uit; gasten sturen hun invoer en zien hun eigen auto direct reageren (voorspelling met correctie).
+## Tech
 
-Goed om te weten:
-- Houd als host het spel open en op de voorgrond. Gaat de app van de host naar de achtergrond, dan staat de wedstrijd stil.
-- Op sommige mobiele of bedrijfsnetwerken lukt een directe verbinding niet. Probeer dan een ander netwerk (bijvoorbeeld wifi in plaats van 4G).
-- Wil je een eigen signalling-server gebruiken? Voeg `?peerhost=jouw.server&peerport=443&peerpath=/` toe aan de URL.
+- [three.js](https://threejs.org) r170 plus its bloom post-processing (MIT, bundled in `vendor/`), no build step.
+- [PeerJS](https://peerjs.com) 1.5 (MIT) for online play: players connect directly via WebRTC; the free public PeerJS server is only used to find each other. The host runs the simulation; guests send input and predict their own car locally.
+- Custom physics at a fixed 120 Hz. The arena is a signed distance field (rounded box plus two goal boxes) shared by the ball, cars and camera, so every curve is drivable.
 
-## Wat zit erin
-
-- **Modi:** 1 tegen 1, 2 tegen 2 en 3 tegen 3 tegen bots (makkelijk / normaal / moeilijk), wedstrijden van 2, 3 of 5 minuten, en vrij oefenen met oneindig boost.
-- **Rijden en vliegen:** gas, remmen, driften, springen met vasthouden, dubbele sprong, flips in alle richtingen, besturing in de lucht (kantelen, draaien, rollen), boosten in de lucht, rijden over de gebogen muren en het plafond, en automatisch terugdraaien als je op je dak ligt.
-- **Regels:** aftellen bij elke aftrap, boostcellen (groot 100, klein 12) die na een tijdje terugkomen, demolities op topsnelheid, een doelpunt telt pas als de bal helemaal over de lijn is, en na tijd op eindigt de wedstrijd zodra de bal de grond raakt. Bij gelijkspel volgt verlenging (golden goal).
-- **Presentatie:** goal-explosies met schokgolf, slow motion, een herhaling na elk doelpunt (tik om over te slaan), een publiek dat juicht, een scorebord boven de middencirkel, naamlabels, en een eindscherm met punten, goals, assists, reddingen, schoten en MVP.
-- **Bots:** die rouleren tussen aanvallen, ondersteunen en keepen, voorspellen waar de bal heen gaat, maken flips en (op moeilijk) luchtaanvallen.
-- **Garage:** drie automodellen (Raptor, Brute, Dart) en acht lakkleuren.
-- **Instellingen:** geluid, automatisch gas, pitch omkeren, stuurgevoeligheid, knopgrootte, landingshulp, trillen, graphics (Snel / Mooi / Ultra), herhalingen en camera-afstand. Alles wordt lokaal opgeslagen.
-- **Graphics:** *Mooi* voegt echte schaduwen, lichtbundels en glanzende lak toe; *Ultra* daarbovenop een bloom-gloed en scherpere weergave.
-
-## Techniek
-
-- [three.js](https://threejs.org) r170 en de bloom-postprocessing (MIT, meegeleverd in `vendor/`), zonder build-stap.
-- [PeerJS](https://peerjs.com) 1.5 (MIT) voor online spelen.
-- Eigen natuurkunde met een vaste stap van 120 Hz. De arena is een *signed distance field* (een afgeronde doos plus twee doelboxen), dus bal, auto's en camera gebruiken allemaal dezelfde vorm. Daardoor kun je overal over de bochten heen rijden.
-
-| Bestand | Inhoud |
+| File | Contents |
 | --- | --- |
-| `js/config.js` | Alle afmetingen en instelwaarden |
-| `js/sdf.js` | Vorm van de arena (afstandsveld en normalen) |
-| `js/ball.js` | Balfysica en balvoorspelling |
-| `js/car.js` | Rijden, springen, flips, besturing in de lucht, botsingen met de muren |
-| `js/game.js` | Wedstrijdverloop, botsingen tussen auto's en bal, scores, herhalingen |
+| `js/config.js` | Dimensions and tuning values |
+| `js/sdf.js` | Arena shape (distance field + normals) |
+| `js/ball.js` | Ball physics and prediction |
+| `js/car.js` | Driving, jumps, flips, air control, wall collisions |
+| `js/game.js` | Match flow, car/ball collisions, scoring, replays, networking state |
 | `js/ai.js` | Bots |
-| `js/arenaView.js`, `js/models.js` | Stadion, auto's en bal (procedureel) |
-| `js/camera.js`, `js/effects.js`, `js/audio.js` | Camera, deeltjes, gegenereerd geluid |
-| `js/net.js` | Online verbindingen (kamers, codes) |
-| `js/input.js`, `js/hud.js`, `js/main.js` | Besturing, HUD, menu's en lobby |
+| `js/maps.js`, `js/arenaView.js`, `js/scenery.js` | Arena themes, stadium, scenery and weather |
+| `js/models.js` | Cars, wheels and ball (procedural) |
+| `js/camera.js`, `js/effects.js`, `js/audio.js` | Camera, particles, synthesized sound and music |
+| `js/net.js` | Online rooms and connections |
+| `js/input.js`, `js/hud.js`, `js/main.js` | Controls, HUD, menus, garage and lobby |

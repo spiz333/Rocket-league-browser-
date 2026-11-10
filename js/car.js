@@ -92,6 +92,9 @@ export class Car {
     this.rightFrom = this.rightFrom || new THREE.Quaternion();
     this.rightTo = this.rightTo || new THREE.Quaternion();
     this.dodgeT = 0;
+    this.steerEff = 0;
+    this.pitchLatch = 0;
+    this.squash = 0;
     this.dodgeFrom = this.dodgeFrom || new THREE.Quaternion();
     this.dodgeAxis = this.dodgeAxis || new THREE.Vector3(1, 0, 0);
   }
@@ -101,7 +104,16 @@ export class Car {
     this.pos.set(x, CAR.RIDE, z);
     this.quat.setFromAxisAngle(Y, yaw);
     this.normal.set(0, 1, 0);
+    this.snapPrev();
   }
+
+  // previous physics state, used to interpolate rendering between physics steps
+  savePrev() {
+    if (!this.prevPos) { this.prevPos = new THREE.Vector3(); this.prevQuat = new THREE.Quaternion(); }
+    this.prevPos.copy(this.pos);
+    this.prevQuat.copy(this.quat);
+  }
+  snapPrev() { this.savePrev(); }
 
   forward(out) { return out.set(0, 0, 1).applyQuaternion(this.quat); }
   up(out) { return out.set(0, 1, 0).applyQuaternion(this.quat); }
@@ -116,6 +128,7 @@ export class Car {
     const up = this.up(_up);
     const jumpPressed = c.jump && !this.prevJump;
     this.prevJump = c.jump;
+    if (this.squash > 0) this.squash = Math.max(0, this.squash - dt * 4);
 
     this.boosting = c.boost && (this.boost > 0 || this.unlimitedBoost);
     if (this.boosting && !this.unlimitedBoost) this.boost = Math.max(0, this.boost - CAR.BOOST_USE * dt);
@@ -142,6 +155,7 @@ export class Car {
       this.onGround = true;
       this.turtleTime = 0;
       this.righting = 0;
+      this.pitchLatch = 0;
       this.normal.copy(_n);
       const n = _n;
 
@@ -185,7 +199,9 @@ export class Car {
 
       // steering
       const k = curvature(Math.abs(spd)) * (c.drift ? 1.3 : 1);
-      const yawRate = -c.steer * spd * k;
+      const ds = c.steer - this.steerEff, maxD = CAR.STEER_RATE * dt;
+      this.steerEff += ds > maxD ? maxD : ds < -maxD ? -maxD : ds;
+      const yawRate = -this.steerEff * spd * k;
       _q.setFromAxisAngle(n, yawRate * dt);
       this.quat.premultiply(_q).normalize();
       this.angVel.copy(n).multiplyScalar(yawRate);
@@ -206,11 +222,14 @@ export class Car {
         this.groundLock = 0.12;
         this.onGround = false;
         this.sinceJump = 0;
+        this.squash = 1;
+        if (this.latchPitch && Math.abs(c.pitch) > 0.3) this.pitchLatch = Math.sign(c.pitch);
         if (this.events && this.events.jump) this.events.jump(this);
       }
     } else {
       if (this.onGround) {
         // drove off a surface without jumping: still allow a flip / double jump
+        if (this.latchPitch && Math.abs(c.pitch) > 0.3) this.pitchLatch = Math.sign(c.pitch);
         this.onGround = false;
         this.jumped = true;
         this.sinceJump = 0.2;
@@ -229,9 +248,11 @@ export class Car {
         this.doubleJumped = true;
         const f = c.fwd !== undefined ? c.fwd : c.pitch, s = c.steer;
         const mag = Math.hypot(f, s);
-        if (mag > 0.5) this.startDodge(f / mag, s / mag);
-        else {
-          this.vel.addScaledVector(up, CAR.JUMP_IMPULSE);
+        if (mag > 0.5) {
+          this.startDodge(f / mag, s / mag);
+          if (this.latchPitch && Math.abs(c.pitch) > 0.3) this.pitchLatch = Math.sign(c.pitch);
+        } else {
+          this.vel.addScaledVector(up, CAR.DOUBLE_JUMP_IMPULSE);
           if (this.events && this.events.jump) this.events.jump(this);
         }
       }
@@ -267,9 +288,10 @@ export class Car {
       } else {
         const roll = c.roll !== 0 ? c.roll : (c.drift ? c.yaw : 0);
         const yaw = c.drift ? 0 : c.yaw;
+        const pitch = this.airPitch(c);
         const resp = Math.min(1, 9 * dt);
         const damp = Math.min(1, 3.2 * dt);
-        _w.x = c.pitch !== 0 ? _w.x + (c.pitch * CAR.AIR_PITCH - _w.x) * resp : _w.x * (1 - damp);
+        _w.x = pitch !== 0 ? _w.x + (pitch * CAR.AIR_PITCH - _w.x) * resp : _w.x * (1 - damp);
         _w.y = yaw !== 0 ? _w.y + (-yaw * CAR.AIR_YAW - _w.y) * resp : _w.y * (1 - damp);
         _w.z = roll !== 0 ? _w.z + (roll * CAR.AIR_ROLL - _w.z) * resp : _w.z * (1 - damp * 1.4);
       }
@@ -279,7 +301,7 @@ export class Car {
       if (wl > CAR.MAX_ANG && !scripted) this.angVel.multiplyScalar(CAR.MAX_ANG / wl);
       const w = scripted ? 0 : this.angVel.length();
       // landing assist: falling towards a surface without stick input -> gently turn wheels down
-      if (this.assist && this.dodging <= 0 && this.righting <= 0 && c.pitch === 0 && c.roll === 0 && !c.drift && this.vel.y < 0) {
+      if (this.assist && this.dodging <= 0 && this.righting <= 0 && this.airPitch(c) === 0 && c.roll === 0 && !c.drift && this.vel.y < 0) {
         const dd = sdf(this.pos.x, this.pos.y, this.pos.z);
         if (dd < 3.2) {
           sdfNormal(this.pos.x, this.pos.y, this.pos.z, _n);
@@ -310,6 +332,15 @@ export class Car {
 
     this.collideArena(dt, this.onGround);
     if (this.onGround) this.surfaceContact = true;
+  }
+
+  // Stick input that was already held when the car left the ground (e.g. holding
+  // forward to drive) does not rotate the car until the stick is re-centred.
+  // This stops cars from endlessly tumbling forward after a jump or flip.
+  airPitch(c) {
+    if (!this.pitchLatch) return c.pitch;
+    if (Math.abs(c.pitch) < 0.25 || Math.sign(c.pitch) !== this.pitchLatch) { this.pitchLatch = 0; return c.pitch; }
+    return 0;
   }
 
   startDodge(f, s) {
@@ -416,7 +447,7 @@ export class Car {
       r(this.dodging), r(this.dodgeT), r(this.dodgeAxis.x), r(this.dodgeAxis.z),
       r(this.dodgeFrom.x), r(this.dodgeFrom.y), r(this.dodgeFrom.z), r(this.dodgeFrom.w),
       r(this.righting), r(this.normal.x), r(this.normal.y), r(this.normal.z),
-      r(this.respawnTimer), r(this.turtleTime),
+      r(this.respawnTimer), r(this.turtleTime), r(this.steerEff), this.pitchLatch,
     ];
   }
 
@@ -440,6 +471,8 @@ export class Car {
     this.normal.set(a[28], a[29], a[30]);
     this.respawnTimer = a[31];
     this.turtleTime = a[32];
+    this.steerEff = a[33] || 0;
+    this.pitchLatch = a[34] || 0;
   }
 
   // world-space corner positions of the hitbox (for debug / effects)

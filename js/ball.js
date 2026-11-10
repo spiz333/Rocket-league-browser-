@@ -19,6 +19,8 @@ export class Ball {
     this.quat = new THREE.Quaternion();
     this.hidden = false;
     this.touchedGround = false;
+    this.renderPos = new THREE.Vector3(0, R, 0);
+    this.renderQuat = new THREE.Quaternion();
   }
 
   reset() {
@@ -26,7 +28,15 @@ export class Ball {
     this.vel.set(0, 0, 0);
     this.angVel.set(0, 0, 0);
     this.hidden = false;
+    this.snapPrev();
   }
+
+  savePrev() {
+    if (!this.prevPos) { this.prevPos = new THREE.Vector3(); this.prevQuat = new THREE.Quaternion(); }
+    this.prevPos.copy(this.pos);
+    this.prevQuat.copy(this.quat);
+  }
+  snapPrev() { this.savePrev(); }
 
   copyFrom(b) {
     this.pos.copy(b.pos);

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="nl">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Nitro Strikers">
-  <meta name="description" content="Nitro Strikers – 3D auto-voetbal met boost, sprongen en flips, gemaakt voor de mobiele browser.">
+  <meta name="description" content="Nitro Strikers – 3D rocket-car soccer with boost, jumps, flips and online play, made for the mobile browser.">
   <title>Nitro Strikers</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
@@ -21,7 +21,7 @@
   <!-- ===== Touch controls (also receives mouse input) ===== -->
   <div id="controls" class="hidden">
     <div id="stick-base"><div id="stick-knob"></div></div>
-    <div id="stick-hint">Raak links aan om te sturen</div>
+    <div id="stick-hint">Touch anywhere on the left to steer</div>
     <div id="btn-drift" class="tbtn small"><span class="lbl">DRIFT</span></div>
     <div id="btn-boost" class="tbtn">
       <svg viewBox="0 0 100 100" aria-hidden="true">
@@ -31,250 +31,263 @@
       <span id="boost-num">33</span>
       <span class="lbl">BOOST</span>
     </div>
-    <div id="btn-jump" class="tbtn big"><span class="lbl">SPRING</span><span class="swipe-hint">swipe = flip</span></div>
+    <div id="btn-jump" class="tbtn big"><span class="lbl">JUMP</span><span class="swipe-hint">swipe = flip</span></div>
   </div>
 
   <!-- ===== HUD ===== -->
   <div id="hud" class="hidden">
     <div id="scoreboard">
-      <div class="team t0"><span id="score-blue">0</span></div>
-      <div id="clock">5:00</div>
-      <div class="team t1"><span id="score-red">0</span></div>
+      <div class="sb-team t0"><span class="sb-name">BLUE</span><span id="score-blue" class="sb-score">0</span><div class="sb-dots" id="dots0"></div></div>
+      <div class="sb-mid"><div id="clock">5:00</div><div id="sb-mode">2 V 2</div></div>
+      <div class="sb-team t1"><span id="score-red" class="sb-score">0</span><span class="sb-name">RED</span><div class="sb-dots" id="dots1"></div></div>
     </div>
+    <div id="callouts"></div>
     <div id="feed"></div>
     <div id="center-msg"></div>
     <div id="sub-msg"></div>
     <div id="labels"></div>
-    <div id="ball-arrow">▶</div>
-    <div id="replay-tag">⟲ HERHALING <small>tik om over te slaan</small></div>
-    <button id="btn-pause" class="hud-btn" aria-label="Pauze">❚❚</button>
-    <button id="btn-cam" class="hud-btn active" aria-label="Bal-camera">BAL<br>CAM</button>
-    <div id="speedo"><span id="speed-val">0</span><small>km/u</small></div>
+    <div id="ball-arrow">▲</div>
+    <canvas id="minimap" width="120" height="160"></canvas>
+    <div id="replay-tag"><span class="rec"></span>REPLAY <small>tap to skip</small></div>
+    <button id="btn-pause" class="hud-btn" aria-label="Pause"><span></span><span></span></button>
+    <button id="btn-cam" class="hud-btn active" aria-label="Ball cam"><b>BALL CAM</b><small id="cam-state">ON</small></button>
+    <div id="speedo"><span id="speed-val">0</span><small>KM/H</small></div>
   </div>
 
   <!-- ===== Menus ===== -->
   <div id="screens">
     <section id="screen-main" class="screen">
-      <div class="logo">
-        <div class="logo-top">NITRO</div>
-        <div class="logo-bottom">STRIKERS</div>
-        <div class="tagline">Raketauto's. Grote bal. Jij aan de knoppen.</div>
+      <header class="topbar">
+        <div class="logo"><span class="logo-a">NITRO</span><span class="logo-b">STRIKERS</span></div>
+        <div class="profile" data-go="garage"><span class="profile-car" id="profile-car">Raptor</span><span class="profile-name" id="profile-name">Player</span></div>
+      </header>
+      <div class="home-grid">
+        <button class="tile tile-play" data-go="play">
+          <span class="tile-art art-play"></span>
+          <span class="tile-text"><b>QUICK MATCH</b><small>1v1 · 2v2 · 3v3 against bots</small></span>
+        </button>
+        <button class="tile tile-online" data-go="online">
+          <span class="tile-art art-online"></span>
+          <span class="tile-text"><b>ONLINE</b><small>Play with friends using a room code</small></span>
+        </button>
+        <button class="tile tile-free" data-action="training">
+          <span class="tile-art art-free"></span>
+          <span class="tile-text"><b>PRACTICE</b><small>Practice with unlimited boost</small></span>
+        </button>
+        <button class="tile tile-garage" data-go="garage">
+          <span class="tile-art art-garage"></span>
+          <span class="tile-text"><b>GARAGE</b><small>Bodies, paint, wheels, boost</small></span>
+        </button>
       </div>
-      <nav class="menu">
-        <button class="btn primary" data-go="play">▶ SPELEN</button>
-        <button class="btn online" data-go="online">🌐 ONLINE SPELEN</button>
-        <button class="btn" data-action="training">VRIJ OEFENEN</button>
-        <button class="btn" data-go="garage">GARAGE</button>
-        <button class="btn" data-go="settings">INSTELLINGEN</button>
-        <button class="btn" data-go="help">BESTURING</button>
-      </nav>
+      <footer class="bottombar">
+        <button class="chip" data-go="settings">⚙ SETTINGS</button>
+        <button class="chip" data-go="help">🎮 CONTROLS</button>
+        <span class="version">v3.0</span>
+      </footer>
     </section>
 
     <section id="screen-play" class="screen hidden">
-      <h2>Nieuwe wedstrijd</h2>
-      <div class="opt-row"><span class="opt-label">Modus</span>
-        <div class="seg" data-opt="teamSize">
-          <button data-val="1">1 v 1</button><button data-val="2">2 v 2</button><button data-val="3">3 v 3</button>
+      <header class="screen-head"><button class="back" data-go="main">‹</button><h2>QUICK MATCH</h2></header>
+      <div class="split">
+        <div class="col-opts">
+          <div class="opt-row"><span class="opt-label">Mode</span>
+            <div class="seg" data-opt="teamSize"><button data-val="1">1v1</button><button data-val="2">2v2</button><button data-val="3">3v3</button></div>
+          </div>
+          <div class="opt-row"><span class="opt-label">Bots</span>
+            <div class="seg" data-opt="difficulty"><button data-val="easy">Casual</button><button data-val="normal">Skilled</button><button data-val="hard">Elite</button></div>
+          </div>
+          <div class="opt-row"><span class="opt-label">Length</span>
+            <div class="seg" data-opt="duration"><button data-val="120">2 min</button><button data-val="180">3 min</button><button data-val="300">5 min</button></div>
+          </div>
+        </div>
+        <div class="col-maps">
+          <span class="opt-label">Arena</span>
+          <div class="map-grid" data-maps="map"></div>
         </div>
       </div>
-      <div class="opt-row"><span class="opt-label">Tegenstanders</span>
-        <div class="seg" data-opt="difficulty">
-          <button data-val="easy">Makkelijk</button><button data-val="normal">Normaal</button><button data-val="hard">Moeilijk</button>
-        </div>
-      </div>
-      <div class="opt-row"><span class="opt-label">Speeltijd</span>
-        <div class="seg" data-opt="duration">
-          <button data-val="120">2 min</button><button data-val="180">3 min</button><button data-val="300">5 min</button>
-        </div>
-      </div>
-      <div class="row-buttons">
-        <button class="btn" data-go="main">TERUG</button>
-        <button class="btn primary" data-action="start">START ▶</button>
+      <div class="row-buttons end">
+        <button class="btn primary" data-action="start">START MATCH ▶</button>
       </div>
     </section>
 
     <section id="screen-online" class="screen hidden">
-      <h2>Online spelen</h2>
-      <div class="opt-row"><span class="opt-label">Jouw naam</span>
-        <input id="player-name" class="text-in" maxlength="14" placeholder="Speler" autocomplete="off" spellcheck="false">
+      <header class="screen-head"><button class="back" data-go="main">‹</button><h2>ONLINE</h2></header>
+      <div class="opt-row"><span class="opt-label">Your name</span>
+        <input id="player-name" class="text-in" maxlength="14" placeholder="Player" autocomplete="off" spellcheck="false">
       </div>
       <div class="online-cards">
         <div class="online-card">
-          <h3>Kamer maken</h3>
-          <p>Jij bent de host. Deel de code met je vrienden; lege plekken worden bots.</p>
-          <button class="btn primary" data-action="host">KAMER MAKEN</button>
+          <h3>Create a room</h3>
+          <p>You host the match. Share the code with friends — empty slots are filled with bots.</p>
+          <button class="btn primary" data-action="host">CREATE ROOM</button>
         </div>
         <div class="online-card">
-          <h3>Meedoen</h3>
-          <p>Vul de code van je vriend in.</p>
+          <h3>Join a room</h3>
+          <p>Enter your friend's 5-letter code.</p>
           <div class="join-row">
             <input id="join-code" class="text-in code" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false">
-            <button class="btn primary" data-action="join">MEEDOEN</button>
+            <button class="btn primary" data-action="join">JOIN</button>
           </div>
         </div>
       </div>
       <p class="note" id="online-status"></p>
-      <div class="row-buttons">
-        <button class="btn" data-go="main">TERUG</button>
-      </div>
     </section>
 
     <section id="screen-lobby" class="screen hidden">
-      <h2>Lobby <span class="room-code" id="room-code">-----</span></h2>
-      <div class="row-buttons lobby-share">
-        <button class="btn" data-action="share">🔗 LINK DELEN</button>
-        <span class="note" id="share-note">Lege plekken worden bots.</span>
-      </div>
+      <header class="screen-head"><h2>LOBBY <span class="room-code" id="room-code">-----</span></h2>
+        <button class="chip" data-action="share">🔗 SHARE LINK</button><span class="note" id="share-note">Empty slots become bots.</span></header>
       <div class="teams">
-        <div class="team-col t0"><h3>BLAUW</h3><ul id="lobby-team0"></ul></div>
-        <div class="team-col t1"><h3>ROOD</h3><ul id="lobby-team1"></ul></div>
+        <div class="team-col t0"><h3>BLUE</h3><ul id="lobby-team0"></ul></div>
+        <div class="team-col t1"><h3>RED</h3><ul id="lobby-team1"></ul></div>
       </div>
       <div id="lobby-host-opts">
-        <div class="opt-row"><span class="opt-label">Modus</span>
-          <div class="seg" data-opt="teamSize"><button data-val="1">1 v 1</button><button data-val="2">2 v 2</button><button data-val="3">3 v 3</button></div>
+        <div class="opt-row"><span class="opt-label">Mode</span>
+          <div class="seg" data-opt="teamSize"><button data-val="1">1v1</button><button data-val="2">2v2</button><button data-val="3">3v3</button></div>
         </div>
         <div class="opt-row"><span class="opt-label">Bots</span>
-          <div class="seg" data-opt="difficulty"><button data-val="easy">Makkelijk</button><button data-val="normal">Normaal</button><button data-val="hard">Moeilijk</button></div>
+          <div class="seg" data-opt="difficulty"><button data-val="easy">Casual</button><button data-val="normal">Skilled</button><button data-val="hard">Elite</button></div>
         </div>
-        <div class="opt-row"><span class="opt-label">Speeltijd</span>
+        <div class="opt-row"><span class="opt-label">Length</span>
           <div class="seg" data-opt="duration"><button data-val="120">2 min</button><button data-val="180">3 min</button><button data-val="300">5 min</button></div>
+        </div>
+        <div class="opt-row"><span class="opt-label">Arena</span>
+          <div class="map-grid small" data-maps="map"></div>
         </div>
       </div>
       <p class="note" id="lobby-status"></p>
       <div class="row-buttons">
-        <button class="btn danger" data-action="leave">VERLATEN</button>
-        <button class="btn" data-action="switch-team">WISSEL TEAM</button>
+        <button class="btn danger" data-action="leave">LEAVE</button>
+        <button class="btn" data-action="switch-team">SWITCH TEAM</button>
         <button class="btn primary" data-action="net-start" id="btn-net-start">START ▶</button>
       </div>
     </section>
 
     <section id="screen-garage" class="screen hidden garage">
-      <h2>Garage</h2>
-      <div class="opt-row"><span class="opt-label">Model</span>
-        <div class="seg" data-opt="body">
-          <button data-val="0">Raptor</button><button data-val="1">Brute</button><button data-val="2">Dart</button>
-        </div>
+      <header class="screen-head"><button class="back" data-go="main">‹</button><h2>GARAGE</h2></header>
+      <div class="garage-tabs" id="garage-tabs">
+        <button data-tab="body" class="sel">BODY</button>
+        <button data-tab="paint">PAINT</button>
+        <button data-tab="wheel">WHEELS</button>
+        <button data-tab="boost">BOOST</button>
+        <button data-tab="decal">DECAL</button>
       </div>
-      <div class="opt-row"><span class="opt-label">Lak</span>
-        <div id="paints" class="paints"></div>
-      </div>
-      <div class="row-buttons">
-        <button class="btn primary" data-go="main">KLAAR</button>
-      </div>
+      <div class="garage-items" id="garage-items"></div>
+      <div class="garage-info"><b id="garage-title">Raptor</b><span id="garage-desc">Balanced wedge</span></div>
     </section>
 
     <section id="screen-settings" class="screen hidden">
-      <h2>Instellingen</h2>
-      <div class="opt-row"><span class="opt-label">Geluid</span>
-        <div class="seg" data-opt="sound"><button data-val="1">Aan</button><button data-val="0">Uit</button></div>
-      </div>
-      <div class="opt-row"><span class="opt-label">Automatisch gas</span>
-        <div class="seg" data-opt="autoGas"><button data-val="1">Aan</button><button data-val="0">Uit</button></div>
-      </div>
-      <div class="opt-row"><span class="opt-label">Neus omhoog/omlaag omkeren</span>
-        <div class="seg" data-opt="invertPitch"><button data-val="0">Normaal</button><button data-val="1">Omgekeerd</button></div>
-      </div>
-      <div class="opt-row"><span class="opt-label">Stuurgevoeligheid</span>
-        <div class="seg" data-opt="steerCurve"><button data-val="1.7">Rustig</button><button data-val="1.3">Normaal</button><button data-val="1">Direct</button></div>
-      </div>
-      <div class="opt-row"><span class="opt-label">Knoppen</span>
-        <div class="seg" data-opt="btnSize"><button data-val="small">Klein</button><button data-val="normal">Normaal</button><button data-val="large">Groot</button></div>
-      </div>
-      <div class="opt-row"><span class="opt-label">Landingshulp</span>
-        <div class="seg" data-opt="assist"><button data-val="1">Aan</button><button data-val="0">Uit</button></div>
-      </div>
-      <div class="opt-row"><span class="opt-label">Trillen</span>
-        <div class="seg" data-opt="vibrate"><button data-val="1">Aan</button><button data-val="0">Uit</button></div>
-      </div>
-      <div class="opt-row"><span class="opt-label">Graphics</span>
-        <div class="seg" data-opt="quality"><button data-val="low">Snel</button><button data-val="medium">Mooi</button><button data-val="high">Ultra</button></div>
-      </div>
-      <div class="opt-row"><span class="opt-label">Herhalingen na goal</span>
-        <div class="seg" data-opt="replays"><button data-val="1">Aan</button><button data-val="0">Uit</button></div>
-      </div>
-      <div class="opt-row"><span class="opt-label">Camera</span>
-        <div class="seg" data-opt="camDist"><button data-val="4">Dichtbij</button><button data-val="4.6">Normaal</button><button data-val="5.4">Ver</button></div>
-      </div>
-      <p class="note" id="quality-note"></p>
-      <div class="row-buttons">
-        <button class="btn primary" data-back>KLAAR</button>
+      <header class="screen-head"><button class="back" data-back>‹</button><h2>SETTINGS</h2></header>
+      <div class="settings-grid">
+        <div class="set-card">
+          <h3>Audio</h3>
+          <div class="opt-row"><span class="opt-label">Sound</span>
+            <div class="seg" data-opt="sound"><button data-val="1">On</button><button data-val="0">Off</button></div></div>
+          <div class="opt-row"><span class="opt-label">Music</span><input type="range" min="0" max="100" step="5" data-range="musicVol"></div>
+          <div class="opt-row"><span class="opt-label">Effects</span><input type="range" min="0" max="100" step="5" data-range="sfxVol"></div>
+        </div>
+        <div class="set-card">
+          <h3>Controls</h3>
+          <div class="opt-row"><span class="opt-label">Auto throttle</span>
+            <div class="seg" data-opt="autoGas"><button data-val="1">On</button><button data-val="0">Off</button></div></div>
+          <div class="opt-row"><span class="opt-label">Steering</span>
+            <div class="seg" data-opt="steerCurve"><button data-val="1.7">Smooth</button><button data-val="1.3">Normal</button><button data-val="1">Direct</button></div></div>
+          <div class="opt-row"><span class="opt-label">Buttons</span>
+            <div class="seg" data-opt="btnSize"><button data-val="small">S</button><button data-val="normal">M</button><button data-val="large">L</button></div></div>
+          <div class="opt-row"><span class="opt-label">Air pitch</span>
+            <div class="seg" data-opt="invertPitch"><button data-val="0">Normal</button><button data-val="1">Inverted</button></div></div>
+          <div class="opt-row"><span class="opt-label">Assists</span>
+            <div class="seg" data-opt="assist"><button data-val="1">On</button><button data-val="0">Off</button></div></div>
+          <div class="opt-row"><span class="opt-label">Vibration</span>
+            <div class="seg" data-opt="vibrate"><button data-val="1">On</button><button data-val="0">Off</button></div></div>
+        </div>
+        <div class="set-card">
+          <h3>Video</h3>
+          <div class="opt-row"><span class="opt-label">Graphics</span>
+            <div class="seg" data-opt="quality"><button data-val="low">Fast</button><button data-val="medium">Nice</button><button data-val="high">Ultra</button></div></div>
+          <div class="opt-row"><span class="opt-label">Camera</span>
+            <div class="seg" data-opt="camDist"><button data-val="4">Close</button><button data-val="4.6">Normal</button><button data-val="5.4">Far</button></div></div>
+          <div class="opt-row"><span class="opt-label">Replays</span>
+            <div class="seg" data-opt="replays"><button data-val="1">On</button><button data-val="0">Off</button></div></div>
+          <div class="opt-row"><span class="opt-label">Minimap</span>
+            <div class="seg" data-opt="minimap"><button data-val="1">On</button><button data-val="0">Off</button></div></div>
+          <p class="note" id="quality-note"></p>
+        </div>
       </div>
     </section>
 
     <section id="screen-help" class="screen hidden">
-      <h2>Besturing</h2>
+      <header class="screen-head"><button class="back" data-back>‹</button><h2>CONTROLS</h2></header>
       <div class="help-grid">
         <div class="help-card">
-          <h3>📱 Telefoon / tablet</h3>
+          <h3>📱 Touch</h3>
           <ul>
-            <li><b>Linkerduim</b>: sleep ergens links om te sturen. Omlaag trekken = remmen / achteruit.</li>
-            <li><b>SPRING</b>: springen. Nog eens tikken in de lucht = dubbele sprong.</li>
-            <li><b>Flip</b>: veeg over SPRING in de richting waarin je wilt flippen (omhoog = voorwaarts). Of: spring, duw de stick een kant op en tik nog eens op SPRING.</li>
-            <li><b>BOOST</b>: vasthouden voor nitro. Werkt ook in de lucht!</li>
-            <li><b>DRIFT</b>: slippen in bochten; in de lucht = rollen met de stick.</li>
-            <li>Schuif met je duim tussen BOOST en SPRING om beide tegelijk te doen.</li>
+            <li><b>Left thumb</b>: touch anywhere on the left to steer. Pull down to brake / reverse.</li>
+            <li><b>JUMP</b>: tap to jump, tap again in the air to double jump.</li>
+            <li><b>Flip</b>: swipe across JUMP in the direction you want to flip (up = forward).</li>
+            <li><b>BOOST</b>: hold for nitro — it works in the air too.</li>
+            <li><b>DRIFT</b>: powerslide; in the air it turns the stick into air roll.</li>
+            <li>Slide your thumb from BOOST onto JUMP to use both.</li>
           </ul>
         </div>
         <div class="help-card">
-          <h3>⌨️ Toetsenbord / 🎮 controller</h3>
+          <h3>⌨️ Keyboard · 🎮 Gamepad</h3>
           <ul>
-            <li><b>W/S</b> of pijlen: gas / remmen &amp; neus omlaag / omhoog</li>
-            <li><b>A/D</b>: sturen &amp; draaien in de lucht</li>
-            <li><b>Spatie</b>: springen · <b>Shift</b> of muisklik: boost</li>
-            <li><b>Ctrl</b>: drift / rollen · <b>Q/E</b>: rollen</li>
-            <li><b>C</b>: bal-camera · <b>Esc</b>: pauze</li>
-            <li>Controller: A springen, B boost, X drift, RT/LT gas, Y camera</li>
+            <li><b>W/S</b> or arrows: throttle / brake and pitch in the air</li>
+            <li><b>A/D</b>: steer and yaw in the air</li>
+            <li><b>Space</b>: jump · <b>Shift</b> or left mouse: boost</li>
+            <li><b>Ctrl</b>: drift / air roll · <b>Q/E</b>: roll</li>
+            <li><b>C</b>: ball cam · <b>Esc</b>: pause</li>
+            <li>Gamepad: A jump, B boost, X drift, RT/LT throttle, Y ball cam</li>
           </ul>
         </div>
         <div class="help-card">
-          <h3>🏆 Regels</h3>
+          <h3>🏆 Rules</h3>
           <ul>
-            <li>Werk de bal helemaal over de doellijn van de tegenstander.</li>
-            <li>Raap blauwe energiecellen op voor boost (groot = 100, klein = 12).</li>
-            <li>Op topsnelheid (vonkenspoor) blaas je tegenstanders op bij een botsing.</li>
-            <li>Tijd op? De wedstrijd stopt zodra de bal de grond raakt. Gelijk = verlenging, wie scoort wint.</li>
+            <li>Put the ball fully over the opponent's goal line.</li>
+            <li>Collect energy cells for boost (big = 100, small = 12).</li>
+            <li>At top speed (sparks trail) you wreck opponents you hit.</li>
+            <li>When time runs out the match ends as soon as the ball touches the ground. Tied? Overtime — next goal wins.</li>
           </ul>
         </div>
-      </div>
-      <div class="row-buttons">
-        <button class="btn primary" data-go="main">TERUG</button>
       </div>
     </section>
 
     <section id="screen-pause" class="screen hidden overlay">
-      <h2>Pauze</h2>
-      <nav class="menu">
-        <button class="btn primary" data-action="resume">▶ DOORGAAN</button>
-        <button class="btn" data-action="restart" id="btn-pause-restart">OPNIEUW BEGINNEN</button>
-        <button class="btn" data-go="settings">INSTELLINGEN</button>
-        <button class="btn" data-go="help">BESTURING</button>
-        <button class="btn danger" data-action="quit">STOPPEN</button>
-      </nav>
+      <div class="pause-box">
+        <h2>PAUSED</h2>
+        <nav class="menu">
+          <button class="btn primary" data-action="resume">▶ RESUME</button>
+          <button class="btn" data-action="restart" id="btn-pause-restart">RESTART</button>
+          <button class="btn" data-go="settings">SETTINGS</button>
+          <button class="btn" data-go="help">CONTROLS</button>
+          <button class="btn danger" data-action="quit">EXIT TO MENU</button>
+        </nav>
+      </div>
     </section>
 
     <section id="screen-end" class="screen hidden overlay">
-      <h2 id="end-title">OVERWINNING!</h2>
+      <h2 id="end-title">VICTORY</h2>
       <div id="end-score"></div>
       <table id="end-table">
-        <thead><tr><th>Speler</th><th>Punten</th><th>Goals</th><th>Assists</th><th>Reddingen</th><th>Schoten</th></tr></thead>
+        <thead><tr><th>Player</th><th>Score</th><th>Goals</th><th>Assists</th><th>Saves</th><th>Shots</th></tr></thead>
         <tbody></tbody>
       </table>
       <p class="note" id="end-note"></p>
       <div class="row-buttons">
-        <button class="btn" data-action="quit" id="btn-end-quit">HOOFDMENU</button>
-        <button class="btn primary" data-action="restart" id="btn-end-again">NOG EEN KEER ▶</button>
+        <button class="btn" data-action="quit" id="btn-end-quit">MAIN MENU</button>
+        <button class="btn primary" data-action="restart" id="btn-end-again">PLAY AGAIN ▶</button>
       </div>
     </section>
   </div>
 
   <div id="rotate">
     <div class="phone"></div>
-    <p>Draai je telefoon een kwartslag<br><small>Nitro Strikers speel je in liggende stand</small></p>
-    <button class="btn" id="btn-rotate-ignore">Toch rechtop spelen</button>
+    <p>Rotate your phone<br><small>Nitro Strikers is played in landscape</small></p>
+    <button class="btn" id="btn-rotate-ignore">Play in portrait anyway</button>
   </div>
 
-  <div id="loading"><div class="spinner"></div><p>Stadion opbouwen…</p></div>
-  <noscript><p class="noscript">Zet JavaScript aan om Nitro Strikers te spelen.</p></noscript>
+  <div id="loading"><div class="logo"><span class="logo-a">NITRO</span><span class="logo-b">STRIKERS</span></div><div class="spinner"></div><p id="loading-text">Building the arena…</p></div>
+  <noscript><p class="noscript">Enable JavaScript to play Nitro Strikers.</p></noscript>
 
   <script type="module" src="js/main.js"></script>
 </body>

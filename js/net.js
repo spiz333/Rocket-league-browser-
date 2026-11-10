@@ -11,8 +11,8 @@ export function loadPeerLib() {
     if (window.Peer) return resolve(window.Peer);
     const s = document.createElement('script');
     s.src = 'vendor/peerjs.min.js';
-    s.onload = () => (window.Peer ? resolve(window.Peer) : reject(new Error('PeerJS niet geladen')));
-    s.onerror = () => { peerLib = null; reject(new Error('PeerJS niet geladen')); };
+    s.onload = () => (window.Peer ? resolve(window.Peer) : reject(new Error('Could not load the networking library')));
+    s.onerror = () => { peerLib = null; reject(new Error('Could not load the networking library')); };
     document.head.appendChild(s);
   });
   return peerLib;
@@ -42,17 +42,17 @@ export function cleanCode(c) {
 }
 
 const ERRORS = {
-  'peer-unavailable': 'Kamer niet gevonden. Klopt de code?',
-  'unavailable-id': 'Deze code is al in gebruik.',
-  'network': 'Geen verbinding met de server. Check je internet.',
-  'server-error': 'De verbindingsserver reageert niet. Probeer het later opnieuw.',
-  'socket-error': 'Verbinding met de server mislukt.',
-  'socket-closed': 'Verbinding met de server verbroken.',
-  'browser-incompatible': 'Je browser ondersteunt geen online spelen (WebRTC).',
-  'webrtc': 'Directe verbinding met de andere speler mislukt.',
+  'peer-unavailable': 'Room not found. Check the code.',
+  'unavailable-id': 'That code is already in use.',
+  'network': 'Cannot reach the server. Check your internet connection.',
+  'server-error': 'The connection server is not responding. Try again later.',
+  'socket-error': 'Could not connect to the server.',
+  'socket-closed': 'Lost the connection to the server.',
+  'browser-incompatible': 'Your browser does not support online play (WebRTC).',
+  'webrtc': 'Could not connect directly to the other player.',
 };
 export function errorText(err) {
-  return ERRORS[err && err.type] || (err && err.message) || 'Onbekende fout';
+  return ERRORS[err && err.type] || (err && err.message) || 'Unknown error';
 }
 
 export class Net {
