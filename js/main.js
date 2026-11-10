@@ -26,6 +26,7 @@ const DEFAULTS = {
   sound: 1, musicVol: 50, sfxVol: 80, autoGas: 1, invertPitch: 0, vibrate: 1,
   quality: isTouch ? 'medium' : 'high', replays: 1, camDist: 4.6, ballCam: 1, minimap: 1,
   steerCurve: 1.3, btnSize: 'normal', assist: 1, name: '', look: defaultLook(),
+  profile: { xp: 0, level: 1, matches: 0, wins: 0, goals: 0 },
 };
 let settings = { ...DEFAULTS };
 try {
@@ -38,6 +39,7 @@ try {
     settings = { ...DEFAULTS, name: o.name || '', look: { ...defaultLook(), body: o.body | 0, paint: o.paint | 0 }, autoGas: o.autoGas ?? 1, invertPitch: o.invertPitch ?? 0 };
   }
   settings.look = { ...defaultLook(), ...settings.look };
+  settings.profile = { ...DEFAULTS.profile, ...settings.profile };
 } catch (_) { /* storage unavailable */ }
 function saveSettings() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(settings)); } catch (_) { /* ignore */ }
@@ -318,10 +320,79 @@ document.addEventListener('click', e => {
   }
 });
 
+function xpForLevel(level) { return 400 + level * 150; }
 function refreshProfile() {
   $('profile-name').textContent = settings.name || 'Player';
   $('profile-car').textContent = BODY_TYPES[settings.look.body % BODY_TYPES.length].name;
+  const pr = settings.profile;
+  $('profile-level').textContent = pr.level;
+  $('profile-xp-fill').style.width = `${Math.min(100, (pr.xp / xpForLevel(pr.level)) * 100)}%`;
 }
+
+// awards XP after a match and animates the bar on the end screen
+function awardXp(res) {
+  const me = res.cars.find(c => c.isPlayer);
+  const box = $('xp-box');
+  if (!me) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden', 'levelup');
+  const pr = settings.profile;
+  const won = res.score[res.playerTeam] > res.score[1 - res.playerTeam];
+  const gain = Math.round(me.points * 0.6 + (won ? 150 : 60) + me.goals * 20);
+  pr.matches++; if (won) pr.wins++; pr.goals += me.goals;
+  const startLevel = pr.level, startXp = pr.xp;
+  pr.xp += gain;
+  while (pr.xp >= xpForLevel(pr.level)) { pr.xp -= xpForLevel(pr.level); pr.level++; }
+  saveSettings();
+  $('xp-gain').textContent = `+${gain} XP`;
+  // animate: fill the old level, then the new one
+  const fill = $('xp-fill');
+  let lvl = startLevel, xp = startXp, remaining = gain;
+  $('xp-level').textContent = lvl;
+  fill.style.transition = 'none';
+  fill.style.width = `${(xp / xpForLevel(lvl)) * 100}%`;
+  $('xp-text').textContent = `LEVEL ${lvl} · ${pr.wins} WINS / ${pr.matches} MATCHES`;
+  const stepFill = () => {
+    const need = xpForLevel(lvl) - xp;
+    const take = Math.min(need, remaining);
+    xp += take; remaining -= take;
+    fill.style.transition = 'width 0.9s ease-out';
+    fill.style.width = `${(xp / xpForLevel(lvl)) * 100}%`;
+    if (xp >= xpForLevel(lvl)) {
+      setTimeout(() => {
+        lvl++; xp = 0;
+        $('xp-level').textContent = lvl;
+        box.classList.remove('levelup'); void box.offsetWidth; box.classList.add('levelup');
+        audio.pickup(true);
+        fill.style.transition = 'none';
+        fill.style.width = '0%';
+        $('xp-text').textContent = `LEVEL UP! LEVEL ${lvl}`;
+        if (remaining > 0) setTimeout(stepFill, 60);
+      }, 950);
+    }
+  };
+  setTimeout(stepFill, 400);
+}
+
+// rotating tips on the main menu
+const TIPS = [
+  'Swipe across JUMP to flip — up is a front flip.',
+  'Flip into the ball for your hardest shots.',
+  'Big energy cells refill your boost to 100.',
+  'Hit an opponent at top speed to wreck them.',
+  'Keep boost for defence — rotate back after you attack.',
+  'Drive up the curved walls to reach high balls.',
+  'Hold DRIFT in the air to roll with the stick.',
+  'Toggle BALL CAM when you lose track of the ball.',
+  'Share your room link to play online with friends.',
+  'Every match earns XP — level up by playing.',
+];
+let tipIdx = (Math.random() * TIPS.length) | 0;
+function nextTip() {
+  const el = $('tips');
+  el.style.opacity = 0;
+  setTimeout(() => { el.innerHTML = `<b>TIP</b>${TIPS[tipIdx % TIPS.length]}`; tipIdx++; el.style.opacity = 1; }, 400);
+}
+setInterval(() => { if (current === 'main') nextTip(); }, 7000);
 
 // ---------- garage ----------
 let preview = null;
@@ -411,11 +482,13 @@ function startMatch(opts, setupOverride = null, map = null) {
   rig.ballCam = !!+settings.ballCam;
   updateCamButton();
   const ts = game.opts.teamSize;
-  hud.setMode(opts.mode === 'training' ? 'PRACTICE' : `${session ? 'ONLINE · ' : ''}${ts} V ${ts}`);
+  const modeText = opts.mode === 'training' ? 'PRACTICE' : `${session ? 'ONLINE · ' : ''}${ts} V ${ts}`;
+  hud.setMode(modeText);
   hud.setScore(0, 0);
   hud.clearMessage();
   hud.clearLabels();
   hud.show(true);
+  if (opts.mode !== 'training') hud.showIntro(game.cars, game.player, getMap(mapId).name, modeText, 2.8);
   $('controls').classList.remove('hidden');
   input.enabled = true;
   input.reset();
@@ -484,6 +557,7 @@ function showEnd(res) {
   const tbody = $('end-table').querySelector('tbody');
   tbody.innerHTML = sorted.map(c => `<tr class="t${c.team}${c.isPlayer ? ' me' : ''}"><td>${escapeHtml(c.name)}${c === mvp ? '<span class="mvp">★ MVP</span>' : ''}</td><td>${c.points}</td><td>${c.goals}</td><td>${c.assists}</td><td>${c.saves}</td><td>${c.shots}</td></tr>`).join('');
   hud.clearMessage();
+  awardXp(res);
   const online = !!session;
   $('btn-end-again').classList.toggle('hidden', online && !session.isHost);
   $('btn-end-quit').textContent = online ? (session.isHost ? 'LOBBY' : 'LEAVE') : 'MAIN MENU';
@@ -823,6 +897,8 @@ function adaptResolution(rawDt, dt) {
   if (next !== dynScale) { dynScale = next; onResize(); }
 }
 
+let replayGoalCam = false;
+let replaySideX = 1;
 let attractTimer = 0;
 let attractFollow = null;
 function updateCamera(dt) {
@@ -842,6 +918,15 @@ function updateCamera(dt) {
   if (st === 'replay') {
     const idx = game.goalScorer ? game.cars.indexOf(game.goalScorer) : -1;
     const proxyBall = game.replayProxies.ball;
+    const nearGoal = game.replayT > game.goalTime - 0.9;
+    if (nearGoal) {
+      const side = proxyBall.pos.z > 0 ? 1 : -1;
+      if (!replayGoalCam) { replayGoalCam = true; rig.snap(); replaySideX = proxyBall.pos.x > 0 ? -1 : 1; }
+      _from.set(replaySideX * 14, 2.6, side * 36);
+      rig.cinematic(proxyBall.pos, _from, dt, 8);
+      return;
+    }
+    replayGoalCam = false;
     if (idx >= 0 && !game.replayProxies.cars[idx].demolished) {
       const p = game.replayProxies.cars[idx];
       const saved = rig.ballCam;
@@ -871,6 +956,7 @@ function updateHud(dt) {
   if (p) {
     hud.setBoost(p.boost, p.unlimitedBoost);
     hud.setSpeed(p.speed() * 3.6 * 4.2);
+    hud.speedFx(game.state === 'playing' && !p.demolished ? Math.max(0, Math.min(1, (p.speed() - 17) / 6)) * (p.boosting ? 1 : 0.6) : 0);
     const active = (game.state === 'playing' || game.state === 'goal') && !game.paused && !p.demolished;
     audio.updateEngine(p.speed(), p.controls.throttle, p.boosting, active);
   }
@@ -889,6 +975,7 @@ for (const id of ['player-name', 'join-code']) {
 $('player-name').addEventListener('change', () => { settings.name = playerName(); saveSettings(); refreshProfile(); });
 setupSegments();
 applySettings();
+nextTip();
 startAttract();
 showScreen('main');
 {

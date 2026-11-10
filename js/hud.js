@@ -26,8 +26,14 @@ export class Hud {
     this.sub = $('sub-msg');
     this.labelsEl = $('labels');
     this.arrow = $('ball-arrow');
-    this.boostRing = $('boost-ring');
+    this.boostSvg = $('boost-svg');
+    this.boostBtn = $('btn-boost');
+    this.boostPopEl = $('boost-pop');
     this.boostNum = $('boost-num');
+    this.goalBanner = $('goal-banner');
+    this.intro = $('intro');
+    this.speedLines = $('speed-lines');
+    this.lastSpeedFx = -1;
     this.speedVal = $('speed-val');
     this.minimap = $('minimap');
     this.mctx = this.minimap.getContext('2d');
@@ -38,8 +44,36 @@ export class Hud {
     this.lastClock = '';
     this.lastDots = '';
     this.mapTimer = 0;
-    this.ringLen = 2 * Math.PI * 42;
-    this.boostRing.style.strokeDasharray = `${this.ringLen}`;
+    this.segs = this._buildGauge(24);
+    this.lastLit = -1;
+  }
+
+  // segmented 270° gauge around the boost button
+  _buildGauge(n) {
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = this.boostSvg;
+    svg.innerHTML = '';
+    const segs = [];
+    const start = 135, sweep = 270, gap = 2.2;
+    const r0 = 41, r1 = 49;
+    const pt = (r, a) => { const t = (a * Math.PI) / 180; return [50 + r * Math.cos(t), 50 + r * Math.sin(t)]; };
+    for (let i = 0; i < n; i++) {
+      const a0 = start + (sweep / n) * i + gap / 2, a1 = start + (sweep / n) * (i + 1) - gap / 2;
+      const [x0, y0] = pt(r1, a0), [x1, y1] = pt(r1, a1), [x2, y2] = pt(r0, a1), [x3, y3] = pt(r0, a0);
+      const p = document.createElementNS(NS, 'path');
+      p.setAttribute('d', `M${x0},${y0} A${r1},${r1} 0 0 1 ${x1},${y1} L${x2},${y2} A${r0},${r0} 0 0 0 ${x3},${y3} Z`);
+      p.setAttribute('class', 'seg');
+      svg.appendChild(p);
+      segs.push(p);
+    }
+    for (const a of [start, start + sweep]) {
+      const [x0, y0] = pt(36, a), [x1, y1] = pt(52, a);
+      const l = document.createElementNS(NS, 'line');
+      l.setAttribute('x1', x0); l.setAttribute('y1', y0); l.setAttribute('x2', x1); l.setAttribute('y2', y1);
+      l.setAttribute('class', 'tick');
+      svg.appendChild(l);
+    }
+    return segs;
   }
 
   show(on) { this.root.classList.toggle('hidden', !on); }
@@ -78,11 +112,56 @@ export class Hud {
   setBoost(v, unlimited) {
     const b = Math.round(v);
     if (b === this.lastBoost && !unlimited) return;
+    if (this.lastBoost >= 0 && b >= 100 && this.lastBoost < 100) {
+      this.boostBtn.classList.remove('flash'); void this.boostBtn.offsetWidth; this.boostBtn.classList.add('flash');
+    }
     this.lastBoost = b;
     this.boostNum.textContent = unlimited ? '∞' : b;
-    const frac = unlimited ? 1 : v / 100;
-    this.boostRing.style.strokeDashoffset = `${this.ringLen * (1 - frac)}`;
-    this.boostRing.classList.toggle('low', b < 15 && !unlimited);
+    const lit = unlimited ? this.segs.length : Math.ceil((v / 100) * this.segs.length - 0.001);
+    if (lit !== this.lastLit) {
+      this.segs.forEach((s, i) => s.classList.toggle('on', i < lit));
+      this.lastLit = lit;
+    }
+    this.boostSvg.classList.toggle('low', b < 20 && !unlimited);
+    this.boostSvg.classList.toggle('full', b >= 100 || unlimited);
+  }
+
+  boostPop(amount) {
+    const el = this.boostPopEl;
+    el.textContent = '+' + amount;
+    el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+  }
+
+  speedFx(level) {
+    const v = Math.round(level * 20) / 20;
+    if (v === this.lastSpeedFx) return;
+    this.lastSpeedFx = v;
+    this.speedLines.style.opacity = v;
+  }
+
+  goal(team, title, sub, speedKmh, dur = 2.8) {
+    const gb = this.goalBanner;
+    gb.className = 't' + team;
+    gb.querySelector('.gb-title').textContent = title;
+    $('gb-sub').textContent = sub || '';
+    $('gb-speed').textContent = speedKmh ? `${Math.round(speedKmh)} KM/H` : '';
+    void gb.offsetWidth;
+    gb.classList.add('show');
+    clearTimeout(this._gbT);
+    this._gbT = setTimeout(() => gb.classList.remove('show'), dur * 1000);
+  }
+
+  showIntro(cars, player, mapName, modeText, dur = 2.4) {
+    for (const t of [0, 1]) {
+      $('intro-' + t).innerHTML = cars.filter(c => c.team === t)
+        .map(c => `<li class="${c === player ? 'me' : ''}"></li>`).join('');
+      [...$('intro-' + t).children].forEach((li, i) => { li.textContent = cars.filter(c => c.team === t)[i].name; });
+    }
+    $('intro-map').textContent = mapName || '';
+    $('intro-mode').textContent = modeText || '';
+    this.intro.classList.add('show');
+    clearTimeout(this._inT);
+    this._inT = setTimeout(() => this.intro.classList.remove('show'), dur * 1000);
   }
 
   setSpeed(kmh) { this.speedVal.textContent = Math.round(kmh); }
@@ -111,6 +190,8 @@ export class Hud {
   }
 
   clearMessage() {
+    this.goalBanner.className = '';
+    this.intro.classList.remove('show');
     this.center.className = '';
     this.sub.className = '';
     this.msgTimer = 0;

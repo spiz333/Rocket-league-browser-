@@ -160,7 +160,7 @@ export class Game {
       this.state = 'countdown';
       this.kickoff = true;
       this.ball.reset();
-    } else this.kickoffReset(o.mode === 'attract' ? 0.01 : 3);
+    } else this.kickoffReset(o.mode === 'attract' ? 0.01 : (o.mode === 'match' ? 4.6 : 3));
     this.updateJumbo();
   }
 
@@ -305,7 +305,7 @@ export class Game {
         break;
       }
       case 'replay': {
-        this.replayT += dt * 0.8;
+        this.replayT += dt * this.replayRate();
         if (!this.replayBoom && this.replayT >= this.goalTime) {
           this.replayBoom = true;
           this.goalExplosion(this.replayProxies.ball.pos, this.lastGoalTeam, false);
@@ -648,7 +648,7 @@ export class Game {
     this.goalScorer = scorer;
     this.pendingTouch = null;
     this.goalShock(this.ball.pos);
-    this.emitFx({ k: 'goal', team: scoringTeam, s: this.cars.indexOf(scorer), a: this.cars.indexOf(assist), p: this.ball.pos.toArray().map(r3) });
+    this.emitFx({ k: 'goal', team: scoringTeam, s: this.cars.indexOf(scorer), a: this.cars.indexOf(assist), p: this.ball.pos.toArray().map(r3), v: Math.round(this.ball.vel.length() * 3.6 * 4.2) });
     this.ball.hidden = true;
     this.goalTimer = 0;
     this.setState('goal');
@@ -685,6 +685,12 @@ export class Game {
     if (this.timeUp && this.score[0] !== this.score[1]) return this.endMatch();
     if (this.timeUp) { this.overtime = true; this.timeLeft = 0; }
     this.kickoffReset(this.opts.mode === 'attract' ? 0.5 : 3);
+  }
+
+  // replays run slower around the moment the ball crosses the line
+  replayRate() {
+    const d = (this.replayT ?? 0) - (this.goalTime ?? 0);
+    return d > -0.7 && d < 0.35 ? 0.3 : 0.85;
   }
 
   startReplay() {
@@ -786,7 +792,7 @@ export class Game {
       }
       case 'pad': {
         const pd = BOOST_PADS[e.i];
-        if (car === this.player) this.audio.pickup(pd.big);
+        if (car === this.player) { this.audio.pickup(pd.big); this.hud.boostPop(pd.big ? 100 : 12); }
         _v.set(pd.x, pd.big ? 1.3 : 0.3, pd.z);
         this.fx.burst(_v, pd.big ? 40 : 10, pd.big ? 6 : 3, 0x59f3ff, { life: 0.6, size: pd.big ? 0.6 : 0.35, up: true, drag: 2.5 });
         if (this.role === 'client' && this.pads[e.i]) this.pads[e.i].active = false;
@@ -819,10 +825,10 @@ export class Game {
         if (!show) break;
         const ours = this.player ? this.player.team === team : true;
         this.audio.goal(ours);
-        const sub = scorer ? `${scorer === this.player ? 'You scored' : scorer.name + ' scored'}${assist ? ' • assist ' + assist.name : ''}` : 'Own goal!';
+        const sub = scorer ? `${scorer === this.player ? 'YOU SCORED' : scorer.name.toUpperCase() + ' SCORED'}${assist ? '  ·  ASSIST ' + assist.name.toUpperCase() : ''}` : 'OWN GOAL';
         if (scorer && scorer === this.player) this.hud.callout('GOAL', 100);
         if (assist && assist === this.player) this.hud.callout('ASSIST', 50);
-        this.hud.message('GOAL!', 'goal t' + team, 2.8, sub);
+        this.hud.goal(team, 'GOAL', sub, e.v, 2.8);
         this.hud.feed(scorer ? `⚽ <b class="t${team}">${scorer.name}</b>${assist ? ` <small>(${assist.name})</small>` : ''}` : `⚽ own goal`, team);
         vib(ours ? [40, 60, 120] : 60);
         break;
@@ -952,7 +958,7 @@ export class Game {
       this.countdownHud();
     }
     if (this.state === 'replay') {
-      this.replayT = latest.rt + (now - latest.recv) / 1000 * 0.8;
+      this.replayT = latest.rt + (now - latest.recv) / 1000 * this.replayRate();
       if (!this.replayBoom && this.replayT >= this.goalTime) {
         this.replayBoom = true;
         this.goalExplosion(this.replayProxies.ball.pos, this.lastGoalTeam, false);

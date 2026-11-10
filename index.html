@@ -24,12 +24,10 @@
     <div id="stick-hint">Touch anywhere on the left to steer</div>
     <div id="btn-drift" class="tbtn small"><span class="lbl">DRIFT</span></div>
     <div id="btn-boost" class="tbtn">
-      <svg viewBox="0 0 100 100" aria-hidden="true">
-        <circle class="track" cx="50" cy="50" r="42"></circle>
-        <circle id="boost-ring" cx="50" cy="50" r="42"></circle>
-      </svg>
+      <svg id="boost-svg" viewBox="0 0 100 100" aria-hidden="true"></svg>
       <span id="boost-num">33</span>
       <span class="lbl">BOOST</span>
+      <span id="boost-pop"></span>
     </div>
     <div id="btn-jump" class="tbtn big"><span class="lbl">JUMP</span><span class="swipe-hint">swipe = flip</span></div>
   </div>
@@ -43,7 +41,21 @@
     </div>
     <div id="callouts"></div>
     <div id="feed"></div>
+    <div id="speed-lines"></div>
+    <div id="letterbox"><i></i><i></i></div>
     <div id="center-msg"></div>
+    <div id="goal-banner">
+      <div class="gb-band"><span class="gb-stripes"></span>
+        <b class="gb-title">GOAL</b>
+        <span class="gb-sub" id="gb-sub"></span>
+        <span class="gb-speed" id="gb-speed"></span>
+      </div>
+    </div>
+    <div id="intro">
+      <div class="intro-team t0"><b>BLUE</b><ul id="intro-0"></ul></div>
+      <div class="intro-vs"><span>VS</span><small id="intro-map"></small><small id="intro-mode"></small></div>
+      <div class="intro-team t1"><b>RED</b><ul id="intro-1"></ul></div>
+    </div>
     <div id="sub-msg"></div>
     <div id="labels"></div>
     <div id="ball-arrow">▲</div>
@@ -59,7 +71,11 @@
     <section id="screen-main" class="screen">
       <header class="topbar">
         <div class="logo"><span class="logo-a">NITRO</span><span class="logo-b">STRIKERS</span></div>
-        <div class="profile" data-go="garage"><span class="profile-car" id="profile-car">Raptor</span><span class="profile-name" id="profile-name">Player</span></div>
+        <div class="profile" data-go="garage">
+          <span class="lvl-badge" id="profile-level">1</span>
+          <span class="profile-txt"><span class="profile-car" id="profile-car">Raptor</span><span class="profile-name" id="profile-name">Player</span>
+          <span class="profile-xp"><i id="profile-xp-fill"></i></span></span>
+        </div>
       </header>
       <div class="home-grid">
         <button class="tile tile-play" data-go="play">
@@ -82,7 +98,8 @@
       <footer class="bottombar">
         <button class="chip" data-go="settings">⚙ SETTINGS</button>
         <button class="chip" data-go="help">🎮 CONTROLS</button>
-        <span class="version">v3.0</span>
+        <span class="tips" id="tips"></span>
+        <span class="version">v3.1</span>
       </footer>
     </section>
 
@@ -272,6 +289,11 @@
         <thead><tr><th>Player</th><th>Score</th><th>Goals</th><th>Assists</th><th>Saves</th><th>Shots</th></tr></thead>
         <tbody></tbody>
       </table>
+      <div class="xp-box" id="xp-box">
+        <span class="lvl-badge" id="xp-level">1</span>
+        <div class="xp-main"><div class="xp-bar"><i id="xp-fill"></i></div><span class="xp-text" id="xp-text"></span></div>
+        <span class="xp-gain" id="xp-gain">+0 XP</span>
+      </div>
       <p class="note" id="end-note"></p>
       <div class="row-buttons">
         <button class="btn" data-action="quit" id="btn-end-quit">MAIN MENU</button>
