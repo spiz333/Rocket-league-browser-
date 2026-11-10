@@ -25,7 +25,7 @@ const STORE_KEY = 'nitro-strikers-settings-v3';
 const DEFAULTS = {
   teamSize: 2, difficulty: 'normal', duration: 300, map: 'random',
   sound: 1, musicVol: 50, sfxVol: 80, autoGas: 1, invertPitch: 0, vibrate: 1,
-  quality: isTouch ? 'medium' : 'high', replays: 1, ballCam: 1, minimap: 1,
+  quality: isTouch ? 'low' : 'high', perfVersion: 2, replays: 1, ballCam: 1, minimap: 1, showFps: 0,
   camFov: 100, camDist: 4.6, camHeight: 1.65, camAngle: -3, camStiff: 50, camSwivel: 4.5, camShake: 1, stickFlip: 0,
   steerCurve: 1.3, btnSize: 'normal', assist: 1, name: '', look: defaultLook(),
   profile: { xp: 0, level: 1, matches: 0, wins: 0, goals: 0 },
@@ -42,8 +42,15 @@ try {
   }
   settings.look = { ...defaultLook(), ...settings.look };
   settings.profile = { ...DEFAULTS.profile, ...settings.profile };
+  // v3.2: phones start on the fast preset (the older default was too heavy for many phones)
+  if (settings.perfVersion !== DEFAULTS.perfVersion) {
+    settings.perfVersion = DEFAULTS.perfVersion;
+    if (isTouch) settings.quality = 'low';
+    saveSettings();
+  }
 } catch (_) { /* storage unavailable */ }
 function saveSettings() {
+  if (typeof settings === 'undefined') return;
   try { localStorage.setItem(STORE_KEY, JSON.stringify(settings)); } catch (_) { /* ignore */ }
 }
 const quality = settings.quality;
@@ -59,7 +66,7 @@ renderer.shadowMap.enabled = useShadows;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 let dynScale = 1; // automatic resolution scaling when the frame rate drops
 function pixelRatio() {
-  const cap = { low: 1.25, medium: 1.6, high: 2 }[settings.quality] || 1.25;
+  const cap = { low: 1.0, medium: 1.5, high: 2 }[settings.quality] || 1.0;
   return Math.min(window.devicePixelRatio || 1, cap) * dynScale;
 }
 renderer.setPixelRatio(pixelRatio());
@@ -217,6 +224,7 @@ function applySettings() {
   document.body.classList.toggle('btn-small', settings.btnSize === 'small');
   document.body.classList.toggle('btn-large', settings.btnSize === 'large');
   document.body.classList.toggle('no-minimap', !+settings.minimap);
+  document.body.classList.toggle('show-fps', !!+settings.showFps);
   if (game.player) { game.player.assist = !!+settings.assist; game.player.latchPitch = !!+settings.assist; }
   audio.setEnabled(!!+settings.sound);
   audio.setVolumes(settings.musicVol / 100, settings.sfxVol / 100);
@@ -944,15 +952,22 @@ function frame(now) {
   if (composer) composer.render(); else renderer.render(scene, camera);
 }
 
+let fpsTimer = 0;
 function adaptResolution(rawDt, dt) {
   if (rawDt > 0.25) return; // tab switch etc.
   frameAvg += (rawDt * 1000 - frameAvg) * 0.05;
+  fpsTimer += dt;
+  if (+settings.showFps && fpsTimer > 0.5) {
+    fpsTimer = 0;
+    $('fps').textContent = `${Math.round(1000 / frameAvg)} FPS · ${Math.round(dynScale * 100)}%`;
+  }
   scaleTimer += dt;
-  if (scaleTimer < 2) return;
+  if (scaleTimer < 1) return;
   scaleTimer = 0;
   let next = dynScale;
-  if (frameAvg > 24 && dynScale > 0.6) next = Math.max(0.6, dynScale - 0.1);
-  else if (frameAvg < 15 && dynScale < 1) next = Math.min(1, dynScale + 0.05);
+  const minScale = isTouch ? 0.5 : 0.6;
+  if (frameAvg > 22 && dynScale > minScale) next = Math.max(minScale, dynScale - (frameAvg > 30 ? 0.15 : 0.08));
+  else if (frameAvg < 14.5 && dynScale < 1) next = Math.min(1, dynScale + 0.05);
   if (next !== dynScale) { dynScale = next; onResize(); }
 }
 

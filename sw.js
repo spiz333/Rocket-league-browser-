@@ -1,5 +1,5 @@
 // Network-first service worker so the game also works offline after the first visit.
-const CACHE = 'nitro-strikers-v4';
+const CACHE = 'nitro-strikers-v5';
 const CORE = [
   './', './index.html', './css/style.css', './manifest.webmanifest',
   './vendor/three.module.min.js',

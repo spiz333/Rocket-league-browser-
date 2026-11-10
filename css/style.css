@@ -712,3 +712,6 @@ body.replay #scoreboard { transform: translateX(-50%) translateY(-6px) scale(0.8
 
 .set-card output { min-width: 34px; font-size: 12px; font-weight: 800; color: var(--nitro); font-variant-numeric: tabular-nums; }
 .set-card input[type=range] { width: min(170px, 34vw); }
+
+#fps { position: fixed; z-index: 30; left: 50%; bottom: calc(30px + var(--sb)); transform: translateX(-50%); font-size: 11px; font-weight: 800; color: #9fe8ff; background: rgba(0,0,0,0.5); padding: 2px 8px; pointer-events: none; display: none; }
+body.show-fps #fps { display: block; }

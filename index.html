@@ -17,11 +17,12 @@
 </head>
 <body>
   <canvas id="game"></canvas>
+  <div id="fps"></div>
 
   <!-- ===== Touch controls (also receives mouse input) ===== -->
   <div id="controls" class="hidden">
     <div id="stick-base"><div id="stick-knob"></div></div>
-    <div id="stick-hint">Touch anywhere on the left to steer</div>
+    <div id="stick-hint">Hold the left side to drive · let go to stop</div>
     <div id="btn-drift" class="tbtn small"><span class="lbl">DRIFT</span></div>
     <div id="btn-boost" class="tbtn">
       <svg id="boost-svg" viewBox="0 0 100 100" aria-hidden="true"></svg>
@@ -99,7 +100,7 @@
         <button class="chip" data-go="settings">⚙ SETTINGS</button>
         <button class="chip" data-go="help">🎮 CONTROLS</button>
         <span class="tips" id="tips"></span>
-        <span class="version">v3.1</span>
+        <span class="version">v3.2</span>
       </footer>
     </section>
 
@@ -237,6 +238,8 @@
             <div class="seg" data-opt="quality"><button data-val="low">Fast</button><button data-val="medium">Nice</button><button data-val="high">Ultra</button></div></div>
           <div class="opt-row"><span class="opt-label">Replays</span>
             <div class="seg" data-opt="replays"><button data-val="1">On</button><button data-val="0">Off</button></div></div>
+          <div class="opt-row"><span class="opt-label">Show FPS</span>
+            <div class="seg" data-opt="showFps"><button data-val="1">On</button><button data-val="0">Off</button></div></div>
           <div class="opt-row"><span class="opt-label">Minimap</span>
             <div class="seg" data-opt="minimap"><button data-val="1">On</button><button data-val="0">Off</button></div></div>
           <p class="note" id="quality-note"></p>
@@ -250,7 +253,7 @@
         <div class="help-card">
           <h3>📱 Touch</h3>
           <ul>
-            <li><b>Left thumb</b>: touch anywhere on the left to steer. Pull down to brake / reverse.</li>
+            <li><b>Left thumb</b>: hold anywhere on the left to drive and steer. Let go to roll to a stop, pull down to brake / reverse.</li>
             <li><b>JUMP</b>: tap to jump, tap again in the air to double jump.</li>
             <li><b>Flip</b>: swipe across JUMP in the direction you want to flip (up = forward).</li>
             <li><b>BOOST</b>: hold for nitro — it works in the air too.</li>

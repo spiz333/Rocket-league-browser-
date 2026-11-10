@@ -430,9 +430,12 @@ export function buildArena(scene, renderer, quality, T = MAPS[0]) {
     bar.position.set(0, GH + 0.3, gz + side * 0.25);
     g.add(bar);
     // goal glow light
-    const gLight = new THREE.PointLight(tc.glow, nice ? 30 : 0, 16, 2);
-    gLight.position.set(0, GH * 0.6, gz + side * (GD - 1));
-    if (nice) g.add(gLight);
+    // point lights make every lit pixel more expensive: Ultra only
+    if (high) {
+      const gLight = new THREE.PointLight(tc.glow, 30, 16, 2);
+      gLight.position.set(0, GH * 0.6, gz + side * (GD - 1));
+      g.add(gLight);
+    }
   }
 
   // outer ground
@@ -487,7 +490,7 @@ export function buildArena(scene, renderer, quality, T = MAPS[0]) {
   group.add(new THREE.Mesh(standGeo, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide })));
 
   // crowd
-  const crowdCount = high ? 6000 : nice ? 4000 : 2000;
+  const crowdCount = high ? 6000 : nice ? 3000 : 1200;
   const cp = new Float32Array(crowdCount * 3), cc = new Float32Array(crowdCount * 3), cph = new Float32Array(crowdCount);
   const totalU = perim[perim.length - 1].u;
   const palette = [0xffffff, 0xffd166, 0x9ad1ff, 0xff9aa2, 0xc3f584, 0xd0b3ff, 0x333333];
@@ -689,54 +692,67 @@ export function buildArena(scene, renderer, quality, T = MAPS[0]) {
 
 // ---------- boost pads ----------
 export class BoostPadsView {
+  // All pads are drawn with a handful of instanced meshes (a few draw calls instead of ~80).
   constructor(scene) {
-    this.items = [];
-    const baseGeoBig = new THREE.CylinderGeometry(1.5, 1.7, 0.12, 24);
-    const baseGeoSmall = new THREE.CylinderGeometry(0.9, 1.0, 0.08, 18);
-    const ringGeoBig = new THREE.RingGeometry(1.1, 1.4, 32);
-    const ringGeoSmall = new THREE.RingGeometry(0.55, 0.78, 24);
-    ringGeoBig.rotateX(-Math.PI / 2);
-    ringGeoSmall.rotateX(-Math.PI / 2);
+    const big = BOOST_PADS.map((p, i) => ({ ...p, i })).filter(p => p.big);
+    const small = BOOST_PADS.map((p, i) => ({ ...p, i })).filter(p => !p.big);
     const baseMat = new THREE.MeshStandardMaterial({ color: 0x2b3140, roughness: 0.5, metalness: 0.6 });
-    const orbGeo = new THREE.IcosahedronGeometry(0.75, 1);
-    for (const p of BOOST_PADS) {
-      const g = new THREE.Group();
-      g.position.set(p.x, 0, p.z);
-      const base = new THREE.Mesh(p.big ? baseGeoBig : baseGeoSmall, baseMat);
-      base.position.y = 0.04;
-      g.add(base);
-      const ringMat = new THREE.MeshBasicMaterial({ color: 0x59f3ff, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false });
-      const ring = new THREE.Mesh(p.big ? ringGeoBig : ringGeoSmall, ringMat);
-      ring.position.y = p.big ? 0.11 : 0.09;
-      g.add(ring);
-      let orb = null, glow = null;
-      if (p.big) {
-        orb = new THREE.Mesh(orbGeo, new THREE.MeshBasicMaterial({ color: 0x8ff8ff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
-        orb.position.y = 1.4;
-        g.add(orb);
-        glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW_TEX.tex, color: 0x59f3ff, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
-        glow.scale.set(4.5, 4.5, 1);
-        glow.position.y = 1.4;
-        g.add(glow);
-      }
-      scene.add(g);
-      this.items.push({ g, ring, ringMat, orb, glow, big: p.big });
-    }
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+    const orbMat = new THREE.MeshBasicMaterial({ color: 0x8ff8ff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
+    const mk = (geo, mat, list, y) => {
+      const m = new THREE.InstancedMesh(geo, mat, list.length);
+      const o = new THREE.Object3D();
+      list.forEach((p, k) => { o.position.set(p.x, y, p.z); o.updateMatrix(); m.setMatrixAt(k, o.matrix); });
+      m.instanceMatrix.needsUpdate = true;
+      scene.add(m);
+      return m;
+    };
+    const ringGeoBig = new THREE.RingGeometry(1.1, 1.4, 32); ringGeoBig.rotateX(-Math.PI / 2);
+    const ringGeoSmall = new THREE.RingGeometry(0.55, 0.78, 24); ringGeoSmall.rotateX(-Math.PI / 2);
+    mk(new THREE.CylinderGeometry(1.5, 1.7, 0.12, 24), baseMat, big, 0.04);
+    mk(new THREE.CylinderGeometry(0.9, 1.0, 0.08, 18), baseMat, small, 0.04);
+    this.ringBig = mk(ringGeoBig, ringMat, big, 0.11);
+    this.ringSmall = mk(ringGeoSmall, ringMat, small, 0.09);
+    for (const r of [this.ringBig, this.ringSmall]) r.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(r.count * 3), 3);
+    this.orbs = mk(new THREE.IcosahedronGeometry(0.75, 1), orbMat, big, 1.4);
+    // glows as one point cloud
+    const gp = new Float32Array(big.length * 3);
+    big.forEach((p, k) => gp.set([p.x, 1.4, p.z], k * 3));
+    const glowGeo = new THREE.BufferGeometry();
+    glowGeo.setAttribute('position', new THREE.BufferAttribute(gp, 3).setUsage(THREE.DynamicDrawUsage));
+    this.glows = new THREE.Points(glowGeo, new THREE.PointsMaterial({ map: GLOW_TEX.tex, color: 0x59f3ff, size: 4.5, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    scene.add(this.glows);
+    this.big = big;
+    this.small = small;
+    this.o = new THREE.Object3D();
+    this.c = new THREE.Color();
+    this.nitro = new THREE.Color(0x59f3ff);
   }
 
   update(pads, time) {
-    for (let i = 0; i < this.items.length; i++) {
-      const it = this.items[i];
-      const active = pads[i].active;
-      it.ringMat.opacity = active ? 0.85 + Math.sin(time * 4 + i) * 0.15 : 0.12;
-      if (it.orb) {
-        it.orb.visible = active;
-        it.glow.visible = active;
-        it.orb.rotation.y = time * 1.6;
-        it.orb.rotation.x = time * 0.7;
-        it.orb.position.y = 1.4 + Math.sin(time * 2 + i) * 0.15;
-        it.glow.position.y = it.orb.position.y;
-      }
-    }
+    const o = this.o, c = this.c;
+    const setRing = (mesh, list) => {
+      list.forEach((p, k) => {
+        const active = pads[p.i].active;
+        c.copy(this.nitro).multiplyScalar(active ? 0.85 + Math.sin(time * 4 + p.i) * 0.15 : 0.1);
+        mesh.setColorAt(k, c);
+      });
+      mesh.instanceColor.needsUpdate = true;
+    };
+    setRing(this.ringBig, this.big);
+    setRing(this.ringSmall, this.small);
+    const gp = this.glows.geometry.attributes.position;
+    this.big.forEach((p, k) => {
+      const active = pads[p.i].active;
+      const y = 1.4 + Math.sin(time * 2 + p.i) * 0.15;
+      o.position.set(p.x, y, p.z);
+      o.rotation.set(time * 0.7, time * 1.6, 0);
+      o.scale.setScalar(active ? 1 : 0.0001);
+      o.updateMatrix();
+      this.orbs.setMatrixAt(k, o.matrix);
+      gp.setXYZ(k, p.x, active ? y : -50, p.z);
+    });
+    this.orbs.instanceMatrix.needsUpdate = true;
+    gp.needsUpdate = true;
   }
 }

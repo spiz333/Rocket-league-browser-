@@ -234,7 +234,9 @@ export class Input {
         up = Math.abs(sy) > Math.abs(up) ? sy : up;
       }
       if (this.touchActive && this.settings.autoGas) {
-        throttle = sy < -0.45 ? sy : (k.size ? throttle : 1);
+        // auto throttle only while the thumb is on the stick; let go = coast to a stop
+        if (this.stick.id !== null) throttle = sy < -0.45 ? sy : 1;
+        else if (!k.size) throttle = 0;
       } else if (this.stick.id !== null) {
         throttle = Math.abs(sy) > Math.abs(throttle) ? sy : throttle;
       }

@@ -569,7 +569,77 @@ export function buildCarMesh(team, look = {}, quality = 'high') {
     }
   });
 
+  // performance: bake all static parts into one mesh per material (≈130 draw calls -> ≈25)
+  const skip = new Set([flames, glow, ...wheels.map(w => w.pivot)]);
+  mergeStatic(model, skip);
+  for (const w of wheels) mergeStatic(w.spin, new Set());
+  if (!nice) model.children.filter(o => o.isSprite).forEach(o => model.remove(o)); // no light glows on Fast
+
   return { root, model, wheels, flames, bodyMat, glow, boostRGB };
+}
+
+const _inv = new THREE.Matrix4();
+const _m = new THREE.Matrix4();
+// Merge every mesh below `parent` (except the `skip` subtrees) into one mesh per material.
+export function mergeStatic(parent, skip) {
+  parent.updateMatrixWorld(true);
+  _inv.copy(parent.matrixWorld).invert();
+  const groups = new Map();
+  const remove = [];
+  parent.traverse(o => {
+    if (!o.isMesh || o === parent) return;
+    for (let a = o; a && a !== parent; a = a.parent) if (skip.has(a)) return;
+    let g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
+    _m.multiplyMatrices(_inv, o.matrixWorld);
+    g.applyMatrix4(_m);
+    if (_m.determinant() < 0) flipWinding(g);
+    const key = o.material.uuid;
+    if (!groups.has(key)) groups.set(key, { mat: o.material, geos: [], cast: o.castShadow, order: o.renderOrder });
+    groups.get(key).geos.push(g);
+    remove.push(o);
+  });
+  for (const o of remove) o.parent.remove(o);
+  for (const { mat, geos, cast, order } of groups.values()) {
+    const mesh = new THREE.Mesh(mergeGeometries(geos), mat);
+    mesh.castShadow = cast;
+    mesh.renderOrder = order;
+    parent.add(mesh);
+  }
+}
+
+function flipWinding(g) {
+  for (const name of ['position', 'normal', 'uv']) {
+    const a = g.attributes[name];
+    if (!a) continue;
+    const n = a.itemSize, arr = a.array;
+    for (let t = 0; t < a.count; t += 3) {
+      for (let k = 0; k < n; k++) {
+        const i1 = (t + 1) * n + k, i2 = (t + 2) * n + k;
+        const tmp = arr[i1]; arr[i1] = arr[i2]; arr[i2] = tmp;
+      }
+    }
+  }
+}
+
+function mergeGeometries(geos) {
+  let count = 0;
+  for (const g of geos) count += g.attributes.position.count;
+  const pos = new Float32Array(count * 3), nor = new Float32Array(count * 3), uv = new Float32Array(count * 2);
+  let o = 0;
+  for (const g of geos) {
+    const n = g.attributes.position.count;
+    pos.set(g.attributes.position.array, o * 3);
+    if (g.attributes.normal) nor.set(g.attributes.normal.array, o * 3);
+    if (g.attributes.uv) uv.set(g.attributes.uv.array, o * 2);
+    o += n;
+    g.dispose();
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  out.computeBoundingSphere();
+  return out;
 }
 
 // ---------- ball ----------
