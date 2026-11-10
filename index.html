@@ -72,6 +72,7 @@
     <section id="screen-main" class="screen">
       <header class="topbar">
         <div class="logo"><span class="logo-a">NITRO</span><span class="logo-b">STRIKERS</span></div>
+        <span class="credits" data-go="shop"></span>
         <div class="profile" data-go="garage">
           <span class="lvl-badge" id="profile-level">1</span>
           <span class="profile-txt"><span class="profile-car" id="profile-car">Raptor</span><span class="profile-name" id="profile-name">Player</span>
@@ -80,27 +81,48 @@
       </header>
       <div class="home-grid">
         <button class="tile tile-play" data-go="play">
-          <span class="tile-art art-play"></span>
-          <span class="tile-text"><b>QUICK MATCH</b><small>1v1 · 2v2 · 3v3 against bots</small></span>
+          <span class="tile-art art-play"></span><svg class="mode-icon" viewBox="0 0 64 64"><defs><radialGradient id="gBall" cx="40%" cy="35%"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#9fb2cc"/></radialGradient></defs>
+   <path d="M4 44h18M8 38h14M12 50h12" stroke="#59f3ff" stroke-width="3" stroke-linecap="round"/>
+   <circle cx="40" cy="30" r="18" fill="url(#gBall)" stroke="#0d1424" stroke-width="2.5"/>
+   <path d="M40 21l7 5-3 8h-8l-3-8z" fill="#1b2433"/><path d="M40 21v-9M47 26l8-3M44 34l5 8M36 34l-5 8M33 26l-8-3" stroke="#1b2433" stroke-width="2"/></svg>
+          <span class="tile-text"><b>QUICK MATCH</b><small>1v1 · 2v2 · 3v3 against bots, arcade mutators</small></span>
         </button>
         <button class="tile tile-online" data-go="online">
-          <span class="tile-art art-online"></span>
+          <span class="tile-art art-online"></span><svg class="mode-icon" viewBox="0 0 64 64"><circle cx="32" cy="32" r="22" fill="none" stroke="#7dffb0" stroke-width="3"/>
+   <ellipse cx="32" cy="32" rx="10" ry="22" fill="none" stroke="#7dffb0" stroke-width="2.5"/><path d="M10 32h44M14 21h36M14 43h36" stroke="#7dffb0" stroke-width="2.5"/>
+   <circle cx="50" cy="14" r="7" fill="#ffcc33" stroke="#0d1424" stroke-width="2"/><circle cx="14" cy="50" r="7" fill="#59f3ff" stroke="#0d1424" stroke-width="2"/></svg>
           <span class="tile-text"><b>ONLINE</b><small>Play with friends using a room code</small></span>
         </button>
         <button class="tile tile-free" data-action="training">
-          <span class="tile-art art-free"></span>
-          <span class="tile-text"><b>PRACTICE</b><small>Practice with unlimited boost</small></span>
+          <span class="tile-art art-free"></span><svg class="mode-icon" viewBox="0 0 64 64"><path d="M22 52L30 14h6l8 38z" fill="#ff7a1a" stroke="#0d1424" stroke-width="2.5" stroke-linejoin="round"/>
+   <path d="M26 34h14M24 43h18" stroke="#fff" stroke-width="4"/><rect x="14" y="51" width="38" height="5" rx="2" fill="#ff7a1a" stroke="#0d1424" stroke-width="2"/>
+   <text x="50" y="20" font-size="16" font-weight="900" fill="#ffcc33">∞</text></svg>
+          <span class="tile-text"><b>PRACTICE</b><small>Unlimited boost, no clock</small></span>
+        </button>
+        <button class="tile tile-challenge" data-action="challenge">
+          <span class="tile-art art-challenge"></span><svg class="mode-icon" viewBox="0 0 64 64"><circle cx="32" cy="32" r="24" fill="none" stroke="#ff5c6d" stroke-width="5"/>
+   <circle cx="32" cy="32" r="15" fill="none" stroke="#fff" stroke-width="5"/><circle cx="32" cy="32" r="6" fill="#ff5c6d"/>
+   <path d="M44 20l12-12M56 8v8M56 8h-8" stroke="#ffcc33" stroke-width="3.5" stroke-linecap="round"/></svg>
+          <span class="tile-text"><b>STRIKER CHALLENGE</b><small>Most goals in 60 seconds · <span id="best-score">best 0</span></small></span>
         </button>
         <button class="tile tile-garage" data-go="garage">
-          <span class="tile-art art-garage"></span>
-          <span class="tile-text"><b>GARAGE</b><small>Bodies, paint, wheels, boost</small></span>
+          <span class="tile-art art-garage"></span><svg class="mode-icon" viewBox="0 0 64 64"><path d="M8 42c2-8 8-12 16-13l6-7h14l6 8c5 1 8 4 8 8v5H8z" fill="#b97bff" stroke="#0d1424" stroke-width="2.5" stroke-linejoin="round"/>
+   <path d="M31 24h10l4 6H27z" fill="#1b2433"/><circle cx="19" cy="45" r="6" fill="#1b2433" stroke="#d9dde6" stroke-width="2.5"/><circle cx="47" cy="45" r="6" fill="#1b2433" stroke="#d9dde6" stroke-width="2.5"/>
+   <path d="M44 6l6 6-14 14-6-6z" fill="#d9dde6" stroke="#0d1424" stroke-width="2"/></svg>
+          <span class="tile-text"><b>GARAGE</b><small>Bodies, liveries, wheels, toppers</small></span>
+        </button>
+        <button class="tile tile-shop" data-go="shop">
+          <span class="tile-art art-shop"></span><svg class="mode-icon" viewBox="0 0 64 64"><path d="M12 22h40l-4 34H16z" fill="#ffcc33" stroke="#0d1424" stroke-width="2.5" stroke-linejoin="round"/>
+   <path d="M23 22v-6a9 9 0 0 1 18 0v6" fill="none" stroke="#0d1424" stroke-width="3"/>
+   <circle cx="32" cy="38" r="9" fill="#fff3b0" stroke="#a86a00" stroke-width="2.5"/><path d="M35 34.5a4.5 4.5 0 1 0 0 7" fill="none" stroke="#7a4b00" stroke-width="2.4" stroke-linecap="round"/></svg>
+          <span class="tile-text"><b>ITEM SHOP</b><small>New featured items every day</small></span>
         </button>
       </div>
       <footer class="bottombar">
         <button class="chip" data-go="settings">⚙ SETTINGS</button>
         <button class="chip" data-go="help">🎮 CONTROLS</button>
         <span class="tips" id="tips"></span>
-        <span class="version">v3.2</span>
+        <span class="version">v4.0</span>
       </footer>
     </section>
 
@@ -116,6 +138,15 @@
           </div>
           <div class="opt-row"><span class="opt-label">Length</span>
             <div class="seg" data-opt="duration"><button data-val="120">2 min</button><button data-val="180">3 min</button><button data-val="300">5 min</button></div>
+          </div>
+          <div class="opt-row"><span class="opt-label">Mutator</span>
+            <div class="seg mutators" data-opt="mutator">
+              <button data-val="none" title="Classic rules">⚽ Standard</button>
+              <button data-val="lowgrav" title="Floaty cars and ball">🌙 Low Gravity</button>
+              <button data-val="bouncy" title="Super bouncy ball">🏀 Bouncy</button>
+              <button data-val="speed" title="Faster cars">⚡ Speed</button>
+              <button data-val="unlimited" title="Boost never runs out">🔥 Unlimited</button>
+            </div>
           </div>
         </div>
         <div class="col-maps">
@@ -181,16 +212,37 @@
     </section>
 
     <section id="screen-garage" class="screen hidden garage">
-      <header class="screen-head"><button class="back" data-go="main">‹</button><h2>GARAGE</h2></header>
+      <header class="screen-head"><button class="back" data-go="main">‹</button><h2>GARAGE</h2><span class="credits"></span></header>
       <div class="garage-tabs" id="garage-tabs">
         <button data-tab="body" class="sel">BODY</button>
+        <button data-tab="livery">LIVERY</button>
         <button data-tab="paint">PAINT</button>
+        <button data-tab="finish">FINISH</button>
         <button data-tab="wheel">WHEELS</button>
         <button data-tab="boost">BOOST</button>
-        <button data-tab="decal">DECAL</button>
+        <button data-tab="topper">TOPPER</button>
+        <button data-tab="goalfx">GOAL FX</button>
+        <button data-tab="trail">TRAIL</button>
       </div>
       <div class="garage-items" id="garage-items"></div>
-      <div class="garage-info"><b id="garage-title">Raptor</b><span id="garage-desc">Balanced wedge</span></div>
+      <div class="item-info" id="garage-info"></div>
+    </section>
+
+    <section id="screen-shop" class="screen hidden garage">
+      <header class="screen-head"><button class="back" data-go="main">‹</button><h2>ITEM SHOP</h2><span class="credits"></span><span class="note" id="shop-timer"></span></header>
+      <div class="garage-tabs" id="shop-tabs">
+        <button data-tab="featured" class="sel">★ FEATURED</button>
+        <button data-tab="body">BODIES</button>
+        <button data-tab="livery">LIVERIES</button>
+        <button data-tab="finish">FINISHES</button>
+        <button data-tab="wheel">WHEELS</button>
+        <button data-tab="boost">BOOSTS</button>
+        <button data-tab="topper">TOPPERS</button>
+        <button data-tab="goalfx">GOAL FX</button>
+        <button data-tab="trail">TRAILS</button>
+      </div>
+      <div class="garage-items" id="shop-items"></div>
+      <div class="item-info" id="shop-info"></div>
     </section>
 
     <section id="screen-settings" class="screen hidden">
@@ -308,6 +360,7 @@
         <span class="lvl-badge" id="xp-level">1</span>
         <div class="xp-main"><div class="xp-bar"><i id="xp-fill"></i></div><span class="xp-text" id="xp-text"></span></div>
         <span class="xp-gain" id="xp-gain">+0 XP</span>
+        <span class="cr-gain" id="cr-gain"></span>
       </div>
       <p class="note" id="end-note"></p>
       <div class="row-buttons">

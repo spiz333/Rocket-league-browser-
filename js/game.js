@@ -1,10 +1,12 @@
 // Match orchestration: physics stepping, rules, scoring, effects and views.
 import * as THREE from '../vendor/three.module.min.js';
-import { ARENA, BALL, CAR, BOOST_PADS, KICKOFF_SPOTS, KICKOFF_SETS, BOT_NAMES, TEAM_COLORS, PHYS_STEP } from './config.js';
+import { ARENA, BALL, CAR, BOOST_PADS, KICKOFF_SPOTS, KICKOFF_SETS, BOT_NAMES, TEAM_COLORS, PHYS_STEP, WORLD, applyMutator } from './config.js';
 import { Ball, stepBall, BallPredictor } from './ball.js';
 import { Car, emptyControls } from './car.js';
 import { Bot, assignRoles } from './ai.js';
-import { buildCarMesh, buildBallMesh, buildShadowMesh, BODY_TYPES, WHEELS, BOOSTS, DECALS, PAINTS } from './models.js';
+import { buildBallMesh, buildShadowMesh } from './models.js';
+import { buildCarMesh, BODY_TYPES } from './cars.js';
+import { ITEMS } from './catalog.js';
 import { Recorder } from './replay.js';
 import { goalAt } from './sdf.js';
 import { formatTime } from './hud.js';
@@ -105,7 +107,10 @@ export class Game {
   // ---------- setup ----------
   setup(opts) {
     this.opts = { mode: 'match', teamSize: 2, difficulty: 'normal', duration: 300, body: 0, paint: null, replays: true, ...opts };
-    for (const v of this.views.values()) this.scene.remove(v.root);
+    for (const v of this.views.values()) {
+      this.scene.remove(v.root);
+      v.root.traverse(o => { if (o.isMesh && o.geometry) o.geometry.dispose(); });
+    }
     this.views.clear();
     this.hud.clearLabels();
     this.cars = [];
@@ -117,6 +122,7 @@ export class Game {
     this.ownOffset.set(0, 0, 0);
     this.recorder.clear();
     const o = this.opts;
+    applyMutator(o.mode === 'attract' ? 'none' : (o.mutator || 'none'));
     this.role = o.role || 'local';
     const roster = o.roster || Game.defaultRoster(o);
     const localOwner = o.localOwner || 'local';
@@ -148,10 +154,10 @@ export class Game {
     this.replayProxies.cars = this.cars.map(() => ({ pos: new THREE.Vector3(), quat: new THREE.Quaternion(), boosting: false, demolished: false }));
     for (const c of this.cars) {
       c.stats = { goals: 0, assists: 0, saves: 0, shots: 0, points: 0, demos: 0 };
-      c.unlimitedBoost = o.mode === 'training';
+      c.unlimitedBoost = o.mode === 'training' || o.mode === 'challenge' || WORLD.unlimitedBoost;
     }
     this.score = [0, 0];
-    this.timeLeft = o.mode === 'match' ? o.duration : 0;
+    this.timeLeft = o.mode === 'match' ? o.duration : o.mode === 'challenge' ? 60 : 0;
     this.overtime = false;
     this.timeUp = false;
     this.matchOver = false;
@@ -166,18 +172,25 @@ export class Game {
 
   static randomLook() {
     const r = (n) => (Math.random() * n) | 0;
-    return { body: r(BODY_TYPES.length), paint: Math.random() < 0.7 ? 0 : r(PAINTS.length), wheel: r(WHEELS.length), boost: r(BOOSTS.length), decal: r(DECALS.length), number: 1 + r(98) };
+    const L = (k) => ITEMS[k].length;
+    return {
+      body: r(BODY_TYPES.length), paint: Math.random() < 0.6 ? 0 : r(L('paint')), finish: Math.random() < 0.7 ? 0 : r(L('finish')),
+      livery: r(L('livery')), wheel: r(L('wheel')), boost: r(L('boost')), topper: Math.random() < 0.7 ? 0 : r(L('topper')),
+      goalfx: r(L('goalfx')), trail: r(L('trail')), number: 1 + r(98),
+    };
   }
 
   static cleanLook(l) {
     l = l || {};
     const n = (v, max) => Math.max(0, Math.min(max - 1, v | 0));
-    return { body: n(l.body, BODY_TYPES.length), paint: n(l.paint, PAINTS.length), wheel: n(l.wheel, WHEELS.length), boost: n(l.boost, BOOSTS.length), decal: n(l.decal, DECALS.length), number: n(l.number, 100) };
+    const out = { body: n(l.body, BODY_TYPES.length), number: n(l.number, 100) };
+    for (const k of ['paint', 'finish', 'livery', 'wheel', 'boost', 'topper', 'goalfx', 'trail']) out[k] = n(l[k], ITEMS[k].length);
+    return out;
   }
 
   static defaultRoster(o) {
     const names = shuffle([...BOT_NAMES]);
-    const sizes = o.mode === 'training' ? [1, 0] : [o.teamSize, o.teamSize];
+    const sizes = o.mode === 'training' || o.mode === 'challenge' ? [1, 0] : [o.teamSize, o.teamSize];
     const roster = [];
     for (const team of [0, 1]) {
       for (let i = 0; i < sizes[team]; i++) {
@@ -230,6 +243,7 @@ export class Game {
       });
     }
     for (const b of this.bots) b.seq = null;
+    if (o.mode === 'challenge') this.spawnChallengeBall();
     this.countdown = countdown;
     this.lastCount = 4;
     this.setState('countdown');
@@ -288,6 +302,11 @@ export class Game {
         this.readControls(dt);
         this.simulate(dt);
         if (o.mode === 'match') this.tickClock(dt);
+        else if (o.mode === 'challenge') {
+          this.timeLeft -= dt;
+          if (this.challengeRespawn > 0) { this.challengeRespawn -= dt; if (this.challengeRespawn <= 0) this.spawnChallengeBall(); }
+          if (this.timeLeft <= 0) { this.timeLeft = 0; this.endMatch(); }
+        }
         this.recorder.record(this.time, this.ball, this.cars);
         break;
       }
@@ -308,7 +327,7 @@ export class Game {
         this.replayT += dt * this.replayRate();
         if (!this.replayBoom && this.replayT >= this.goalTime) {
           this.replayBoom = true;
-          this.goalExplosion(this.replayProxies.ball.pos, this.lastGoalTeam, false);
+          this.goalExplosion(this.replayProxies.ball.pos, this.lastGoalTeam, false, this.lastGoalFx | 0);
         }
         if (this.replayT >= this.replayEnd) this.endReplay();
         break;
@@ -351,7 +370,8 @@ export class Game {
       r.pressSeen = false;
     }
     if (!frozen) {
-      assignRoles(this);
+      this.roleTimer = (this.roleTimer || 0) - dt;
+      if (this.roleTimer <= 0) { this.roleTimer = 0.1; assignRoles(this); }
       for (const b of this.bots) b.update(dt, this);
     }
   }
@@ -623,7 +643,26 @@ export class Game {
   }
 
   // ---------- goals ----------
+  spawnChallengeBall() {
+    const r = (a, b) => a + Math.random() * (b - a);
+    this.ball.reset();
+    this.ball.pos.set(r(-20, 20), 1 + r(0, 5), r(-2, 26));
+    this.ball.vel.set(r(-5, 5), r(0, 6), r(-4, 3));
+    this.ball.snapPrev();
+  }
+
   onGoal(goalTeam) {
+    if (this.opts.mode === 'challenge') {
+      // quick-fire: count it, celebrate briefly, drop a new ball
+      if (goalTeam === 1) { this.score[0]++; this.player.stats.goals++; this.player.stats.points += 100; }
+      this.jumboDirty = true;
+      this.emitFx({ k: 'goal', team: 0, s: goalTeam === 1 ? 0 : -1, a: -1, p: this.ball.pos.toArray().map(r3), v: Math.round(this.ball.vel.length() * 15.1), fx: this.player.look ? this.player.look.goalfx | 0 : 0 });
+      this.ball.hidden = true;
+      this.ball.pos.set(0, -40, 0);
+      this.ball.vel.set(0, 0, 0);
+      this.challengeRespawn = 0.9;
+      return;
+    }
     const scoringTeam = 1 - goalTeam;
     this.score[scoringTeam]++;
     this.jumboDirty = true;
@@ -648,7 +687,7 @@ export class Game {
     this.goalScorer = scorer;
     this.pendingTouch = null;
     this.goalShock(this.ball.pos);
-    this.emitFx({ k: 'goal', team: scoringTeam, s: this.cars.indexOf(scorer), a: this.cars.indexOf(assist), p: this.ball.pos.toArray().map(r3), v: Math.round(this.ball.vel.length() * 3.6 * 4.2) });
+    this.emitFx({ k: 'goal', team: scoringTeam, s: this.cars.indexOf(scorer), a: this.cars.indexOf(assist), p: this.ball.pos.toArray().map(r3), v: Math.round(this.ball.vel.length() * 3.6 * 4.2), fx: scorer && scorer.look ? scorer.look.goalfx | 0 : 0 });
     this.ball.hidden = true;
     this.goalTimer = 0;
     this.setState('goal');
@@ -670,12 +709,60 @@ export class Game {
     }
   }
 
-  goalExplosion(pos, team, physical) {
+  goalExplosion(pos, team, physical, style = 0) {
     const tc = TEAM_COLORS[team];
-    this.fx.burst(pos, 220, 26, tc.glow, { life: 1.6, size: 1.0, drag: 1.6, whiteMix: 0.7, grow: 0.5 });
-    this.fx.burst(pos, 80, 10, 0xffffff, { life: 1.0, size: 1.4, drag: 2.5, grow: 2 });
-    this.fx.ring(pos, _v.set(0, 0, 1), tc.glow, 18, 0.9);
-    this.fx.ring(pos, UP, 0xffffff, 12, 0.7);
+    const p = pos.clone();
+    const fx = this.fx;
+    switch (ITEMS.goalfx[style]?.name) {
+      case 'Fireworks': {
+        const cols = [tc.glow, 0xffd23a, 0xff4fa8, 0x7dff6e, 0xffffff];
+        for (let k = 0; k < 6; k++) {
+          setTimeout(() => {
+            const q = p.clone().add(_v.set((Math.random() - 0.5) * 10, 2 + Math.random() * 6, (Math.random() - 0.5) * 6));
+            fx.burst(q, 70, 14, cols[k % cols.length], { life: 1.3, size: 0.55, drag: 1.2, grav: 4, whiteMix: 0.3 });
+            this.audio.bounce(18, 0.6);
+          }, k * 140);
+        }
+        fx.burst(p, 60, 8, 0xffffff, { life: 0.8, size: 1.2, drag: 2.5, grow: 2 });
+        break;
+      }
+      case 'Shockwave':
+        for (let k = 0; k < 4; k++) setTimeout(() => { fx.ring(p, UP, k % 2 ? 0xffffff : tc.glow, 22 + k * 6, 0.9); fx.ring(p, _v.set(0, 0, 1), tc.glow, 16 + k * 4, 0.8); }, k * 110);
+        fx.burst(p, 120, 30, tc.glow, { life: 0.9, size: 0.7, drag: 3, whiteMix: 0.5 });
+        break;
+      case 'Confetti': {
+        const cols = [0xff4f6d, 0xffd23a, 0x3ad7ff, 0x7dff6e, 0xb46bff, 0xffffff];
+        for (const c of cols) fx.burst(p, 45, 16, c, { life: 2.6, size: 0.35, drag: 1.4, grav: 2.5, up: true, alpha: 1 });
+        fx.ring(p, UP, tc.glow, 12, 0.7);
+        break;
+      }
+      case 'Lightning':
+        for (let k = 0; k < 7; k++) {
+          const a = (k / 7) * Math.PI * 2;
+          for (let s2 = 0; s2 < 14; s2++) {
+            const r = s2 * 0.9, jitter = (Math.random() - 0.5) * 1.2;
+            fx.spawn(p.x + Math.cos(a) * r + jitter, p.y + Math.sin(s2 * 1.7) * 1.2, p.z + Math.sin(a) * r + jitter, 0, 0, 0, 0.5 + s2 * 0.02, 0.8, 0.75, 0.9, 1.0, 1);
+          }
+        }
+        fx.burst(p, 160, 22, 0x9fd8ff, { life: 0.9, size: 0.6, drag: 2.5, whiteMix: 0.6 });
+        fx.ring(p, UP, 0xbfe8ff, 16, 0.5);
+        break;
+      case 'Supernova':
+        fx.burst(p, 90, -10, 0xffffff, { life: 0.45, size: 1.2, drag: 0, grow: -2 });
+        setTimeout(() => {
+          fx.burst(p, 260, 34, 0xffb02e, { life: 1.8, size: 1.1, drag: 1.4, whiteMix: 0.5, grow: 0.6 });
+          fx.burst(p, 120, 18, tc.glow, { life: 1.4, size: 1.4, drag: 2, grow: 1.5 });
+          fx.ring(p, UP, 0xffe08a, 26, 1.1);
+          fx.ring(p, _v.set(0, 0, 1), 0xffffff, 20, 0.9);
+          this.rig.shake(1.4);
+        }, 380);
+        break;
+      default:
+        fx.burst(p, 220, 26, tc.glow, { life: 1.6, size: 1.0, drag: 1.6, whiteMix: 0.7, grow: 0.5 });
+        fx.burst(p, 80, 10, 0xffffff, { life: 1.0, size: 1.4, drag: 2.5, grow: 2 });
+        fx.ring(p, _v.set(0, 0, 1), tc.glow, 18, 0.9);
+        fx.ring(p, UP, 0xffffff, 12, 0.7);
+    }
     this.rig.shake(1.1);
     if (this.arena.crowdMat) this.arena.crowdMat.uniforms.excite.value = 1.0;
   }
@@ -742,6 +829,7 @@ export class Game {
 
   results() {
     return {
+      mode: this.opts.mode,
       score: [...this.score],
       playerTeam: this.player ? this.player.team : 0,
       cars: this.cars.map(c => ({ name: c.name, team: c.team, owner: c.owner, isPlayer: c.isPlayer, ...c.stats })),
@@ -749,6 +837,7 @@ export class Game {
   }
 
   clockText() {
+    if (this.opts.mode === 'challenge') return formatTime(this.timeLeft, false);
     if (this.opts.mode !== 'match') return '∞';
     return formatTime(this.timeLeft, this.overtime);
   }
@@ -820,7 +909,8 @@ export class Game {
         const team = e.team;
         const scorer = e.s >= 0 ? this.cars[e.s] : null;
         const assist = e.a >= 0 ? this.cars[e.a] : null;
-        this.goalExplosion(pos, team, false);
+        this.lastGoalFx = e.fx | 0;
+        this.goalExplosion(pos, team, false, this.lastGoalFx);
         if (this.role === 'client') { this.ball.hidden = true; this.goalScorer = scorer; this.lastGoalTeam = team; }
         if (!show) break;
         const ours = this.player ? this.player.team === team : true;
@@ -961,7 +1051,7 @@ export class Game {
       this.replayT = latest.rt + (now - latest.recv) / 1000 * this.replayRate();
       if (!this.replayBoom && this.replayT >= this.goalTime) {
         this.replayBoom = true;
-        this.goalExplosion(this.replayProxies.ball.pos, this.lastGoalTeam, false);
+        this.goalExplosion(this.replayProxies.ball.pos, this.lastGoalTeam, false, this.lastGoalFx | 0);
       }
     }
     for (let i = 0; i < this.pads.length; i++) this.pads[i].active = latest.p[i] === '1';
@@ -1084,10 +1174,8 @@ export class Game {
             0.35, 0.45, bc[0], bc[1], bc[2], 0.8, { drag: 2, grow: 1.2 });
         }
       }
-      if (!replay && car.supersonic) {
-        _v.set((Math.random() - 0.5) * 0.6, 0.1, -0.7).applyQuaternion(quat).add(pos);
-        this.fx.spawn(_v.x, _v.y, _v.z, 0, 0, 0, 0.3, 0.35, 1, 1, 1, 0.6, { grow: -0.8 });
-      }
+      if (!replay && car.supersonic) this.trail(car, pos, quat, time);
+      if (view.spinner) view.spinner.rotation.y += dt * (8 + car.speed());
     });
 
     this.padsView.update(this.pads, time);
@@ -1097,6 +1185,21 @@ export class Game {
       u.excite.value = Math.max(0.12, u.excite.value - dt * 0.25);
     }
     if (this.arena.update) this.arena.update(dt, time, this.rig.camera);
+  }
+
+  trail(car, pos, quat, time) {
+    const name = ITEMS.trail[car.look ? car.look.trail | 0 : 0]?.name;
+    _v.set((Math.random() - 0.5) * 0.6, 0.1, -0.7).applyQuaternion(quat).add(pos);
+    let r = 1, g = 1, b = 1, size = 0.35, life = 0.3, grow = -0.8, a = 0.6;
+    switch (name) {
+      case 'Fire': r = 1; g = 0.45 + Math.random() * 0.3; b = 0.1; size = 0.55; grow = 0.6; break;
+      case 'Ice': r = 0.7; g = 0.92; b = 1; size = 0.45; life = 0.5; break;
+      case 'Rainbow': _col.setHSL((time * 0.6 + Math.random() * 0.1) % 1, 0.9, 0.6); r = _col.r; g = _col.g; b = _col.b; size = 0.5; life = 0.5; grow = 0; a = 0.8; break;
+      case 'Neon': _col.set(TEAM_COLORS[car.team].glow); r = _col.r; g = _col.g; b = _col.b; size = 0.45; life = 0.4; a = 0.9; break;
+      case 'Stardust': r = 1; g = 0.9; b = 0.6; size = 0.25; life = 0.8; grow = -0.2; a = 1; break;
+      default: break;
+    }
+    this.fx.spawn(_v.x, _v.y, _v.z, 0, 0, 0, life, size, r, g, b, a, { grow });
   }
 
   dust(car, amount) {

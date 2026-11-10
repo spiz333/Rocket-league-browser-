@@ -1,6 +1,6 @@
 // Rule-based bots: rotation roles, intercepts, dodges and (on hard) aerials.
 import * as THREE from '../vendor/three.module.min.js';
-import { ARENA, BALL, CAR, GRAVITY, DIFFICULTY, BOOST_PADS } from './config.js';
+import { ARENA, BALL, CAR, WORLD, DIFFICULTY, BOOST_PADS } from './config.js';
 
 const { L, W, GW } = ARENA;
 const _v = new THREE.Vector3();
@@ -392,7 +392,7 @@ export class Bot {
       const T = Math.max(0.15, this.aerialEnd - s.t);
       // required acceleration to reach the target in T
       _a.copy(this.aerialTarget).sub(car.pos).addScaledVector(car.vel, -T).multiplyScalar(2 / (T * T));
-      _a.y += GRAVITY;
+      _a.y += WORLD.gravity;
       const need = _a.length();
       _a.normalize();
       if (s.t < 0.22) { c.jump = true; }

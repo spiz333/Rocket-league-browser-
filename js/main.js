@@ -6,8 +6,9 @@ import { Input } from './input.js';
 import { Hud } from './hud.js';
 import { CameraRig } from './camera.js';
 import { Game } from './game.js';
-import { PAINTS, BODY_TYPES, WHEELS, BOOSTS, DECALS, buildCarMesh, defaultLook } from './models.js';
-import { TEAM_COLORS, BOT_NAMES } from './config.js';
+import { buildCarMesh, defaultLook, BODY_TYPES, liveryThumb, bodySilhouette } from './cars.js';
+import { ITEMS, SLOTS, RARITY, itemId, itemPrice, defaultInventory, dailyShop, msToMidnightUTC, creditsForMatch, STARTING_CREDITS } from './catalog.js';
+import { TEAM_COLORS, BOT_NAMES, MUTATORS } from './config.js';
 import { MAPS, getMap } from './maps.js';
 import { Net, errorText, cleanCode } from './net.js';
 import { EffectComposer } from '../vendor/postprocessing/EffectComposer.js';
@@ -29,6 +30,7 @@ const DEFAULTS = {
   camFov: 100, camDist: 4.6, camHeight: 1.65, camAngle: -3, camStiff: 50, camSwivel: 4.5, camShake: 1, stickFlip: 0,
   steerCurve: 1.3, btnSize: 'normal', assist: 1, name: '', look: defaultLook(),
   profile: { xp: 0, level: 1, matches: 0, wins: 0, goals: 0 },
+  credits: STARTING_CREDITS, inventory: defaultInventory(), mutator: 'none', challengeBest: 0,
 };
 let settings = { ...DEFAULTS };
 try {
@@ -42,6 +44,14 @@ try {
   }
   settings.look = { ...defaultLook(), ...settings.look };
   settings.profile = { ...DEFAULTS.profile, ...settings.profile };
+  settings.inventory = [...new Set([...(settings.inventory || []), ...defaultInventory()])];
+  if (typeof settings.credits !== 'number') settings.credits = STARTING_CREDITS;
+  // old 'decal' slot became 'livery'
+  if (settings.look.decal !== undefined && settings.look.livery === undefined) settings.look.livery = settings.look.decal;
+  for (const k of Object.keys(SLOTS)) {
+    const max = k === 'body' ? BODY_TYPES.length : ITEMS[k].length;
+    settings.look[k] = Math.max(0, Math.min(max - 1, settings.look[k] | 0));
+  }
   // v3.2: phones start on the fast preset (the older default was too heavy for many phones)
   if (settings.perfVersion !== DEFAULTS.perfVersion) {
     settings.perfVersion = DEFAULTS.perfVersion;
@@ -261,7 +271,7 @@ window.addEventListener('resize', onResize);
 window.addEventListener('orientationchange', () => setTimeout(onResize, 200));
 
 // ---------- screens ----------
-const screens = ['main', 'play', 'online', 'lobby', 'garage', 'settings', 'help', 'pause', 'end'];
+const screens = ['main', 'play', 'online', 'lobby', 'garage', 'shop', 'settings', 'help', 'pause', 'end'];
 let current = 'main';
 let previous = 'main';
 let appMode = 'menu'; // menu | garage | match
@@ -272,9 +282,9 @@ function showScreen(name) {
   current = name;
   for (const s of screens) $('screen-' + s).classList.toggle('hidden', s !== name);
   syncSegments();
-  if (name === 'garage') enterGarage();
+  if (name === 'garage' || name === 'shop') enterGarage();
   else if (appMode === 'garage') exitGarage();
-  if (name === 'main') refreshProfile();
+  if (name === 'main') { refreshProfile(); refreshCredits(); }
 }
 function hideScreens() {
   for (const s of screens) $('screen-' + s).classList.add('hidden');
@@ -365,6 +375,7 @@ document.addEventListener('click', e => {
   switch (act.dataset.action) {
     case 'start': startMatch({ mode: 'match' }); break;
     case 'training': startMatch({ mode: 'training' }); break;
+    case 'challenge': startMatch({ mode: 'challenge' }); break;
     case 'resume': resume(); break;
     case 'restart':
       if (session) { if (session.isHost) hostStartMatch(); }
@@ -393,6 +404,7 @@ function refreshProfile() {
   $('profile-car').textContent = BODY_TYPES[settings.look.body % BODY_TYPES.length].name;
   const pr = settings.profile;
   $('profile-level').textContent = pr.level;
+  $('best-score').textContent = 'best ' + (settings.challengeBest | 0);
   $('profile-xp-fill').style.width = `${Math.min(100, (pr.xp / xpForLevel(pr.level)) * 100)}%`;
 }
 
@@ -400,10 +412,14 @@ function refreshProfile() {
 function awardXp(res) {
   const me = res.cars.find(c => c.isPlayer);
   const box = $('xp-box');
-  if (!me) { box.classList.add('hidden'); return; }
+  if (!me) { box.classList.add('hidden'); $('cr-gain').textContent = ''; return; }
+  const won = res.score[res.playerTeam] > res.score[1 - res.playerTeam];
+  let credits = res.mode === 'challenge' ? res.score[0] * 30 : creditsForMatch(me.points, won, res.mode);
+  if (res.mode === 'challenge' && res.score[0] > (settings.challengeBest | 0)) { settings.challengeBest = res.score[0]; credits += 100; }
+  addCredits(credits);
+  $('cr-gain').innerHTML = credits ? `+${credits} ${COIN}` : '';
   box.classList.remove('hidden', 'levelup');
   const pr = settings.profile;
-  const won = res.score[res.playerTeam] > res.score[1 - res.playerTeam];
   const gain = Math.round(me.points * 0.6 + (won ? 150 : 60) + me.goals * 20);
   pr.matches++; if (won) pr.wins++; pr.goals += me.goals;
   const startLevel = pr.level, startXp = pr.xp;
@@ -461,62 +477,189 @@ function nextTip() {
 }
 setInterval(() => { if (current === 'main') nextTip(); }, 7000);
 
-// ---------- garage ----------
+// ---------- economy ----------
+const COIN = '<svg class="coin" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#ffc53a" stroke="#a86a00" stroke-width="2"/><path d="M12.8 6.6a4 4 0 1 0 0 6.8" fill="none" stroke="#7a4b00" stroke-width="2.2" stroke-linecap="round"/></svg>';
+function owns(slot, i) { return settings.inventory.includes(itemId(slot, i)); }
+function refreshCredits() {
+  document.querySelectorAll('.credits').forEach(el => { el.innerHTML = `${COIN}<b>${settings.credits.toLocaleString('en-US')}</b>`; });
+}
+function addCredits(n) {
+  settings.credits += n;
+  saveSettings();
+  refreshCredits();
+}
+function buy(slot, i, price) {
+  if (owns(slot, i)) return true;
+  if (settings.credits < price) { audio.whistle(); return false; }
+  settings.credits -= price;
+  settings.inventory.push(itemId(slot, i));
+  saveSettings();
+  refreshCredits();
+  audio.pickup(true);
+  return true;
+}
+
+// ---------- garage & shop (shared 3D showroom) ----------
 let preview = null;
 let previewSpin = 0;
-let garageTab = 'body';
+let showroomTab = 'body';
+let tryOn = null;             // look being previewed (may include unowned items)
+let shopSel = null;           // { slot, index, price } selected in the shop
+const SLOT_ICONS = {
+  topper: ['∅', '👑', '🚧', '😇', '😈', '🧢', '🦈', '🥳'],
+  goalfx: ['💥', '🎆', '◎', '🎊', '⚡', '☀'],
+  trail: ['✨', '🔥', '❄', '🌈', '💡', '🌟'],
+};
+function hex(c) { return '#' + c.toString(16).padStart(6, '0'); }
+function itemIcon(slot, i) {
+  const it = ITEMS[slot] ? ITEMS[slot][i] : null;
+  const team = 0;
+  switch (slot) {
+    case 'body': return bodySilhouette(i);
+    case 'livery': {
+      const p = ITEMS.paint[settings.look.paint | 0];
+      return `<img class="thumb" src="${liveryThumb(i, p.color != null ? p.color : TEAM_COLORS[team].main, team)}" alt="">`;
+    }
+    case 'paint': return `<i class="sw ${it.color == null ? 'team' : ''}" style="${it.color == null ? '' : 'background:' + hex(it.color)}"></i>`;
+    case 'finish': {
+      const bg = { Gloss: 'linear-gradient(135deg,#3a76ff,#a9c6ff 45%,#1c3f9c)', Matte: '#3a5fae', Satin: 'linear-gradient(135deg,#3561c0,#7c9be0)', Pearl: 'linear-gradient(135deg,#ffd6f0,#c7f1ff,#fff3c4)', Chrome: 'linear-gradient(135deg,#fff,#8a93a3 40%,#f1f3f7 60%,#5b6372)' }[it.name];
+      return `<i class="sw" style="background:${bg}"></i>`;
+    }
+    case 'wheel': {
+      const n = { star: 5, turbine: 10, disc: 0, mesh: 12, tri: 3, retro: 0, split: 10, rally: 0 }[it.style] ?? 5;
+      let spokes = '';
+      for (let k = 0; k < n; k++) { const a = (k / n) * Math.PI * 2; spokes += `<line x1="20" y1="20" x2="${(20 + Math.sin(a) * 12).toFixed(1)}" y2="${(20 - Math.cos(a) * 12).toFixed(1)}" stroke="${hex(it.rim)}" stroke-width="2.4"/>`; }
+      return `<svg viewBox="0 0 40 40" class="sil"><circle cx="20" cy="20" r="18" fill="#15161b"/><circle cx="20" cy="20" r="13" fill="${n ? '#23262e' : hex(it.rim)}"/>${spokes}<circle cx="20" cy="20" r="3.5" fill="#59f3ff"/></svg>`;
+    }
+    case 'boost': return `<i class="sw ${it.outer == null ? 'team' : ''}" style="${it.outer == null ? '' : 'background:radial-gradient(circle at 50% 60%,#fff,' + hex(it.outer) + ' 55%,#0a0d18)'}"></i>`;
+    default: return `<span class="ico">${(SLOT_ICONS[slot] || [])[i] || '•'}</span>`;
+  }
+}
+function itemCard(slot, i, opts = {}) {
+  const it = ITEMS[slot][i];
+  const rar = RARITY[it.rarity] || RARITY.common;
+  const owned = owns(slot, i);
+  const price = Math.round(itemPrice(slot, i) * (1 - (opts.discount || 0)));
+  const sel = opts.selected ? ' sel' : '';
+  const tag = owned ? (opts.equipped ? '<span class="tag eq">EQUIPPED</span>' : '<span class="tag own">OWNED</span>')
+    : `<span class="tag price">${COIN}${price.toLocaleString('en-US')}</span>`;
+  return `<button class="g-item${sel}${owned ? '' : ' locked'}" data-slot="${slot}" data-i="${i}" data-price="${price}" style="--rar:${rar.color}">
+    <span class="rar-bar"></span><span class="g-ico">${itemIcon(slot, i)}</span><span class="g-name">${it.name}</span>${tag}
+    ${opts.discount ? `<span class="deal">-${Math.round(opts.discount * 100)}%</span>` : ''}</button>`;
+}
 function refreshPreview() {
   if (appMode !== 'garage') return;
-  if (preview) scene.remove(preview.root);
-  preview = buildCarMesh(0, settings.look, quality);
+  if (preview) { scene.remove(preview.root); preview.root.traverse(o => { if (o.isMesh && o.geometry) o.geometry.dispose(); }); }
+  preview = buildCarMesh(0, tryOn || settings.look, quality);
   preview.root.position.set(0, 0.38, 0);
-  preview.flames.visible = garageTab === 'boost';
+  preview.flames.visible = showroomTab === 'boost';
   scene.add(preview.root);
 }
-const GARAGE = {
-  body: { list: BODY_TYPES, key: 'body', item: (b) => `<span class="ico">🏎</span>${b.name}`, desc: (b) => b.desc },
-  paint: { list: PAINTS, key: 'paint', item: (p) => `<i class="sw ${p.color == null ? 'team' : ''}" style="${p.color == null ? '' : 'background:#' + p.color.toString(16).padStart(6, '0')}"></i>${p.name}`, desc: (p) => p.color == null ? 'Uses your team colour' : 'Custom paint' },
-  wheel: { list: WHEELS, key: 'wheel', item: (w) => `<span class="ico">⚙</span>${w.name}`, desc: () => 'Rims' },
-  boost: { list: BOOSTS, key: 'boost', item: (b) => `<i class="sw ${b.outer == null ? 'team' : ''}" style="${b.outer == null ? '' : 'background:radial-gradient(circle,#fff,#' + b.outer.toString(16).padStart(6, '0') + ')'}"></i>${b.name}`, desc: () => 'Boost trail colour' },
-  decal: { list: DECALS, key: 'decal', item: (d) => `<span class="ico">${['∅', '║', '⚡', '#', '◧'][DECALS.indexOf(d)] || '•'}</span>${d.name}`, desc: () => 'Body decal' },
-};
 function renderGarage() {
-  const g = GARAGE[garageTab];
-  const sel = settings.look[g.key] | 0;
-  $('garage-items').innerHTML = g.list.map((it, i) => `<button class="g-item${i === sel ? ' sel' : ''}" data-i="${i}">${g.item(it)}</button>`).join('');
-  $('garage-title').textContent = g.list[sel].name;
-  $('garage-desc').textContent = g.desc(g.list[sel]);
-  document.querySelectorAll('#garage-tabs button').forEach(b => b.classList.toggle('sel', b.dataset.tab === garageTab));
+  const slot = showroomTab;
+  const list = slot === 'body' ? ITEMS.body : ITEMS[slot];
+  const sel = (tryOn || settings.look)[slot] | 0;
+  $('garage-items').innerHTML = list.map((_, i) => itemCard(slot, i, { selected: i === sel, equipped: (settings.look[slot] | 0) === i })).join('');
+  document.querySelectorAll('#garage-tabs button').forEach(b => b.classList.toggle('sel', b.dataset.tab === slot));
+  showItemInfo(slot, sel, 'garage');
+}
+function showItemInfo(slot, i, where) {
+  const it = ITEMS[slot][i];
+  const rar = RARITY[it.rarity] || RARITY.common;
+  const owned = owns(slot, i);
+  const info = $(where + '-info');
+  const price = shopSel && shopSel.slot === slot && shopSel.index === i ? shopSel.price : itemPrice(slot, i);
+  info.innerHTML = `<span class="rar-name" style="color:${rar.color}">${rar.name} · ${SLOTS[slot].label}</span>
+    <b>${it.name}</b><span class="desc">${it.desc || ''}</span>
+    ${owned ? ((settings.look[slot] | 0) === i ? '<span class="note">Equipped</span>' : `<button class="btn primary" data-equip="${slot}:${i}">EQUIP</button>`)
+      : `<button class="btn primary buy" data-buy="${slot}:${i}:${price}" ${settings.credits < price ? 'disabled' : ''}>BUY ${COIN}${price.toLocaleString('en-US')}</button>
+         ${settings.credits < price ? '<span class="note">Win matches to earn more credits.</span>' : ''}`}`;
+}
+function onItemClick(e, where) {
+  const b = e.target.closest('.g-item');
+  if (!b) return;
+  const slot = b.dataset.slot, i = +b.dataset.i;
+  audio.click();
+  tryOn = { ...settings.look, [slot]: i };
+  if (owns(slot, i) && where === 'garage') { settings.look = { ...settings.look, [slot]: i }; saveSettings(); refreshProfile(); }
+  shopSel = { slot, index: i, price: +b.dataset.price };
+  if (where === 'garage') renderGarage(); else renderShop();
+  showItemInfo(slot, i, where);
+  refreshPreview();
 }
 $('garage-tabs').addEventListener('click', e => {
   const b = e.target.closest('button');
   if (!b) return;
-  garageTab = b.dataset.tab;
+  showroomTab = b.dataset.tab;
+  tryOn = null; shopSel = null;
   audio.click();
   renderGarage();
   refreshPreview();
 });
-$('garage-items').addEventListener('click', e => {
-  const b = e.target.closest('.g-item');
+$('garage-items').addEventListener('click', e => onItemClick(e, 'garage'));
+document.addEventListener('click', e => {
+  const buyBtn = e.target.closest('[data-buy]');
+  const eqBtn = e.target.closest('[data-equip]');
+  if (buyBtn) {
+    const [slot, i, price] = buyBtn.dataset.buy.split(':');
+    if (buy(slot, +i, +price)) {
+      settings.look = { ...settings.look, [slot]: +i };
+      saveSettings();
+      refreshProfile();
+      if (current === 'shop') renderShop(); else renderGarage();
+      showItemInfo(slot, +i, current === 'shop' ? 'shop' : 'garage');
+      refreshPreview();
+    }
+  }
+  if (eqBtn) {
+    const [slot, i] = eqBtn.dataset.equip.split(':');
+    settings.look = { ...settings.look, [slot]: +i };
+    saveSettings();
+    audio.click();
+    refreshProfile();
+    if (current === 'shop') renderShop(); else renderGarage();
+    showItemInfo(slot, +i, current === 'shop' ? 'shop' : 'garage');
+  }
+});
+
+let shopTab = 'featured';
+function renderShop() {
+  const grid = $('shop-items');
+  document.querySelectorAll('#shop-tabs button').forEach(b => b.classList.toggle('sel', b.dataset.tab === shopTab));
+  if (shopTab === 'featured') {
+    grid.innerHTML = dailyShop().map(d => itemCard(d.slot, d.index, { discount: d.discount, selected: shopSel && shopSel.slot === d.slot && shopSel.index === d.index })).join('');
+  } else {
+    const list = ITEMS[shopTab];
+    grid.innerHTML = list.map((it, i) => it.free ? '' : itemCard(shopTab, i, { selected: shopSel && shopSel.slot === shopTab && shopSel.index === i })).join('');
+  }
+  const ms = msToMidnightUTC();
+  $('shop-timer').textContent = `New items in ${Math.floor(ms / 3600000)}h ${Math.floor(ms / 60000) % 60}m`;
+  if (!shopSel) $('shop-info').innerHTML = '<span class="desc">Tap an item to preview it on your car.</span>';
+}
+$('shop-tabs').addEventListener('click', e => {
+  const b = e.target.closest('button');
   if (!b) return;
-  settings.look = { ...settings.look, [GARAGE[garageTab].key]: +b.dataset.i };
-  saveSettings();
+  shopTab = b.dataset.tab;
   audio.click();
-  renderGarage();
-  refreshPreview();
+  renderShop();
 });
+$('shop-items').addEventListener('click', e => onItemClick(e, 'shop'));
+
 function enterGarage() {
   appMode = 'garage';
   game.paused = true;
   for (const v of game.views.values()) v.root.visible = false;
   game.ballView.group.visible = false;
   game.ballShadow.visible = false;
-  renderGarage();
+  tryOn = null; shopSel = null;
+  if (current === 'shop') renderShop(); else renderGarage();
+  refreshCredits();
   refreshPreview();
   rig.snap();
 }
 function exitGarage() {
   appMode = 'menu';
+  tryOn = null;
   if (preview) { scene.remove(preview.root); preview = null; }
   game.paused = false;
 }
@@ -543,19 +686,23 @@ function startMatch(opts, setupOverride = null, map = null) {
     look: settings.look,
     playerName: settings.name || 'You',
     replays: !!+settings.replays,
+    mutator: opts.mode === 'match' ? settings.mutator : 'none',
   });
   game.net = session ? session.net : null;
   if (game.player) { game.player.assist = !!+settings.assist; game.player.latchPitch = !!+settings.assist; }
   rig.ballCam = !!+settings.ballCam;
   updateCamButton();
   const ts = game.opts.teamSize;
-  const modeText = opts.mode === 'training' ? 'PRACTICE' : `${session ? 'ONLINE · ' : ''}${ts} V ${ts}`;
+  const mut = MUTATORS.find(m => m.id === game.opts.mutator);
+  const modeText = opts.mode === 'training' ? 'PRACTICE' : opts.mode === 'challenge' ? 'STRIKER CHALLENGE'
+    : `${session ? 'ONLINE · ' : ''}${ts} V ${ts}${mut && mut.id !== 'none' ? ' · ' + mut.name.toUpperCase() : ''}`;
   hud.setMode(modeText);
   hud.setScore(0, 0);
   hud.clearMessage();
   hud.clearLabels();
   hud.show(true);
-  if (opts.mode !== 'training') hud.showIntro(game.cars, game.player, getMap(mapId).name, modeText, 2.8);
+  if (opts.mode === 'match' || opts.mode === 'online') hud.showIntro(game.cars, game.player, getMap(mapId).name, modeText, 2.8);
+  if (opts.mode === 'challenge') hud.message('SCORE AS MANY AS YOU CAN', 'overtime', 2.5);
   $('controls').classList.remove('hidden');
   input.enabled = true;
   input.reset();
@@ -614,7 +761,7 @@ function showEnd(res) {
   const my = res.playerTeam;
   const won = res.score[my] > res.score[1 - my];
   const title = $('end-title');
-  title.textContent = won ? 'VICTORY' : 'DEFEAT';
+  title.textContent = res.mode === 'challenge' ? 'TIME!' : (won ? 'VICTORY' : 'DEFEAT');
   title.className = won ? 'win' : 'loss';
   $('end-score').innerHTML = `<span class="t0">${res.score[0]}</span> – <span class="t1">${res.score[1]}</span>`;
   const winner = res.score[0] > res.score[1] ? 0 : 1;
@@ -882,7 +1029,7 @@ function onlineSetup(roster, opts, role, localOwner) {
   return {
     mode: 'match', online: true, role, roster, localOwner,
     teamSize: opts.teamSize, difficulty: opts.difficulty, duration: opts.duration,
-    replays: !!+settings.replays,
+    replays: !!+settings.replays, mutator: opts.mutator || 'none',
   };
 }
 
@@ -890,7 +1037,7 @@ function hostStartMatch() {
   if (!session || !session.isHost) return;
   const roster = buildRoster();
   const map = resolveMap(settings.map);
-  const opts = { teamSize: settings.teamSize, difficulty: settings.difficulty, duration: settings.duration };
+  const opts = { teamSize: settings.teamSize, difficulty: settings.difficulty, duration: settings.duration, mutator: settings.mutator };
   session.inMatch = true;
   session.net.broadcast({ t: 'start', roster, opts, map });
   startMatch({ mode: 'online' }, onlineSetup(roster, opts, 'host', 'host'), map);
@@ -918,10 +1065,34 @@ let scaleTimer = 0;
 const _target = new THREE.Vector3();
 const _from = new THREE.Vector3();
 
+// Frame pacing: rAF timestamps jitter by a millisecond or two, which makes motion
+// look uneven. Snap each frame to the measured display refresh interval and carry
+// the tiny difference forward, so the simulation stays in sync with real time.
+let refreshDt = 1 / 60;
+let pacingErr = 0;
+const recentDt = [];
+function pacedDt(raw) {
+  recentDt.push(raw);
+  if (recentDt.length > 40) recentDt.shift();
+  if (recentDt.length === 40 && (frameCount % 20) === 0) {
+    const sorted = [...recentDt].sort((a, b) => a - b);
+    refreshDt = sorted[20];
+  }
+  if (raw > 0.25) { pacingErr = 0; return 0.05; } // tab was hidden
+  let dt = raw;
+  if (Math.abs(raw - refreshDt) < refreshDt * 0.3) dt = refreshDt;
+  else if (Math.abs(raw - refreshDt * 2) < refreshDt * 0.3) dt = refreshDt * 2;
+  pacingErr += raw - dt;
+  if (Math.abs(pacingErr) > refreshDt * 0.5) { dt += pacingErr; pacingErr = 0; }
+  return Math.max(0, Math.min(0.05, dt));
+}
+let frameCount = 0;
+
 function frame(now) {
   requestAnimationFrame(frame);
+  frameCount++;
   const rawDt = Math.max(0, (now - last) / 1000);
-  const dt = Math.min(0.05, rawDt);
+  const dt = pacedDt(rawDt);
   last = now;
   elapsed += dt;
   adaptResolution(rawDt, dt);
@@ -1021,18 +1192,20 @@ function updateCamera(dt) {
   }
 }
 
+let lastBoostState = false;
 function updateHud(dt) {
   hud.update(dt);
   hud.setScore(game.score[0], game.score[1]);
   hud.setClock(game.clockText(), game.overtime, game.opts.mode === 'match' ? game.timeLeft : undefined);
-  hud.setTeams(game.cars);
+  if ((frameCount & 7) === 0) hud.setTeams(game.cars);
   const p = game.player;
   if (p) {
     hud.setBoost(p.boost, p.unlimitedBoost);
-    hud.setSpeed(p.speed() * 3.6 * 4.2);
+    if ((frameCount & 3) === 0) hud.setSpeed(p.speed() * 3.6 * 4.2);
     hud.speedFx(game.state === 'playing' && !p.demolished ? Math.max(0, Math.min(1, (p.speed() - 17) / 6)) * (p.boosting ? 1 : 0.6) : 0);
     const active = (game.state === 'playing' || game.state === 'goal') && !game.paused && !p.demolished;
-    audio.updateEngine(p.speed(), p.controls.throttle, p.boosting, active);
+    if ((frameCount & 1) === 0 || p.boosting !== lastBoostState) audio.updateEngine(p.speed(), p.controls.throttle, p.boosting, active);
+    lastBoostState = p.boosting;
   }
   const replay = game.state === 'replay';
   hud.updateLabels(game.cars, camera, replay ? null : p, game.ball.renderPos, !rig.ballCam && game.state === 'playing');
@@ -1050,6 +1223,7 @@ $('player-name').addEventListener('change', () => { settings.name = playerName()
 setupSegments();
 applySettings();
 nextTip();
+refreshCredits();
 startAttract();
 showScreen('main');
 {

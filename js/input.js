@@ -1,5 +1,6 @@
 // Touch (virtual stick + buttons), keyboard and gamepad input.
 const DEAD = 0.12;
+const NO_PADS = [];
 
 function dz(v) {
   const a = Math.abs(v);
@@ -56,6 +57,7 @@ export class Input {
       this.emit('any');
     });
     window.addEventListener('keyup', e => this.keys.delete(e.code));
+    window.addEventListener('gamepadconnected', () => { this.padConnected = true; });
     window.addEventListener('blur', () => { this.keys.clear(); this.rightTouches.clear(); this._resetStick(); });
   }
 
@@ -149,6 +151,7 @@ export class Input {
 
   // default (idle) position of the virtual stick
   layout() {
+    this.rects = null;
     if (this.stick.id !== null) return;
     const w = window.innerWidth, h = window.innerHeight;
     const x = Math.max(95, w * 0.15), y = h - Math.max(95, h * 0.28);
@@ -156,8 +159,16 @@ export class Input {
     this.stickKnob.style.transform = 'translate(0px, 0px)';
   }
 
+  // button rectangles are cached: reading layout on every touch move causes jank
+  _rect(name) {
+    if (!this.rects) this.rects = {};
+    let r = this.rects[name];
+    if (!r || r.width === 0) { r = this.buttons[name].getBoundingClientRect(); this.rects[name] = r; }
+    return r;
+  }
+
   _hit(name, x, y) {
-    const r = this.buttons[name].getBoundingClientRect();
+    const r = this._rect(name);
     if (r.width === 0) return false;
     const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
     return Math.hypot(x - cx, y - cy) < r.width / 2 * 1.18;
@@ -243,7 +254,7 @@ export class Input {
     }
 
     // gamepad
-    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    const pads = this.padConnected && navigator.getGamepads ? navigator.getGamepads() : NO_PADS;
     for (const p of pads) {
       if (!p || !p.connected) continue;
       const ax = dz(p.axes[0] || 0), ay = dz(-(p.axes[1] || 0));

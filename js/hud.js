@@ -273,18 +273,22 @@ export class Hud {
       }
       seen.add(car);
       if (el.firstChild.textContent !== car.name) el.firstChild.textContent = car.name;
-      el.lastChild.style.transform = `scaleX(${Math.max(0, Math.min(1, car.boost / 100))})`;
+      const bq = Math.round(Math.max(0, Math.min(1, car.boost / 100)) * 20);
+      if (el._b !== bq) { el._b = bq; el.lastChild.style.transform = `scaleX(${bq / 20})`; }
       _v.copy(car.renderPos || car.pos);
       _v.y += 1.1;
       const dist = _v.distanceTo(camera.position);
       _v.project(camera);
       const vis = !car.demolished && _v.z < 1 && _v.x > -1.1 && _v.x < 1.1 && _v.y > -1.1 && _v.y < 1.1 && dist < 70;
       if (vis) {
-        const x = (_v.x * 0.5 + 0.5) * w, y = (-_v.y * 0.5 + 0.5) * h;
-        const sc = THREE.MathUtils.clamp(10 / dist, 0.55, 1);
-        el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -100%) scale(${sc})`;
-        el.style.opacity = '1';
-      } else el.style.opacity = '0';
+        const x = Math.round((_v.x * 0.5 + 0.5) * w), y = Math.round((-_v.y * 0.5 + 0.5) * h);
+        const sc = Math.round(THREE.MathUtils.clamp(10 / dist, 0.55, 1) * 20) / 20;
+        if (el._x !== x || el._y !== y || el._s !== sc) {
+          el._x = x; el._y = y; el._s = sc;
+          el.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -100%) scale(${sc})`;
+        }
+        if (el._o !== 1) { el._o = 1; el.style.opacity = '1'; }
+      } else if (el._o !== 0) { el._o = 0; el.style.opacity = '0'; }
     }
     for (const [car, el] of this.labels) {
       if (!seen.has(car)) { el.remove(); this.labels.delete(car); }

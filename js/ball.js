@@ -1,5 +1,5 @@
 import * as THREE from '../vendor/three.module.min.js';
-import { BALL, GRAVITY } from './config.js';
+import { BALL, WORLD } from './config.js';
 import { sdf, sdfNormal } from './sdf.js';
 
 const R = BALL.R;
@@ -48,7 +48,7 @@ export class Ball {
 // Advances a ball-like object ({pos, vel, angVel, quat?}) by dt.
 // Returns the impact speed of a wall bounce (0 if none).
 export function stepBall(b, dt, integrateRotation = true) {
-  b.vel.y -= GRAVITY * dt;
+  b.vel.y -= WORLD.gravity * dt;
   b.vel.multiplyScalar(1 - BALL.DRAG * dt);
   const sp = b.vel.length();
   if (sp > BALL.MAX_SPEED) b.vel.multiplyScalar(BALL.MAX_SPEED / sp);

@@ -1,5 +1,5 @@
 import * as THREE from '../vendor/three.module.min.js';
-import { CAR, GRAVITY } from './config.js';
+import { CAR, WORLD } from './config.js';
 import { sdf, sdfNormal } from './sdf.js';
 
 const _fwd = new THREE.Vector3();
@@ -165,12 +165,12 @@ export class Car {
       this.quat.premultiply(_qi).normalize();
 
       // suspension: keep at ride height
-      const holdable = (-GRAVITY * n.y - (n.y < 0.95 ? CAR.STICKY : 0)) <= 0;
+      const holdable = (-WORLD.gravity * n.y - (n.y < 0.95 ? CAR.STICKY : 0)) <= 0;
       if (d < CAR.RIDE) this.pos.addScaledVector(n, CAR.RIDE - d);
       else if (holdable) this.pos.addScaledVector(n, (CAR.RIDE - d) * Math.min(1, 25 * dt));
 
       // gravity + sticky force
-      this.vel.y -= GRAVITY * dt;
+      this.vel.y -= WORLD.gravity * dt;
       if (n.y < 0.95) this.vel.addScaledVector(n, -CAR.STICKY * dt);
       let vn = this.vel.dot(n);
       if (vn < 0 || holdable) { this.vel.addScaledVector(n, -vn); vn = 0; }
@@ -235,7 +235,7 @@ export class Car {
         this.sinceJump = 0.2;
       }
       const flipLift = this.dodging > 0 && this.dodgeT < 0.35 ? 0.35 : 1;
-      this.vel.y -= GRAVITY * dt * flipLift;
+      this.vel.y -= WORLD.gravity * dt * flipLift;
       this.sinceJump += dt;
 
       if (this.jumpHold > 0) {

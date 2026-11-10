@@ -12,6 +12,8 @@ export const ARENA = {
 };
 
 export const GRAVITY = 6.5;
+// live physics values that arcade mutators may change for a match
+export const WORLD = { gravity: GRAVITY, unlimitedBoost: false };
 export const PHYS_STEP = 1 / 120;
 
 export const BALL = {
@@ -106,3 +108,30 @@ export const DIFFICULTY = {
   normal: { label: 'Normaal',   reaction: 0.18, speed: 0.95, boost: 0.8,  dodge: 0.7,  aerial: false, aimError: 0.15, jumpSkill: 0.75 },
   hard:   { label: 'Moeilijk',  reaction: 0.06, speed: 1.0,  boost: 1.0,  dodge: 1.0,  aerial: true,  aimError: 0.04, jumpSkill: 1.0 },
 };
+
+// ---------- arcade mutators ----------
+export const MUTATORS = [
+  { id: 'none', name: 'Standard', desc: 'Classic rules' },
+  { id: 'lowgrav', name: 'Low Gravity', desc: 'Floaty cars and a floaty ball' },
+  { id: 'bouncy', name: 'Bouncy Ball', desc: 'The ball barely loses speed off walls' },
+  { id: 'speed', name: 'Speed Demon', desc: 'Faster cars and stronger boost' },
+  { id: 'unlimited', name: 'Unlimited Boost', desc: 'Boost never runs out' },
+];
+const BASE = { ball: { ...BALL }, car: { ...CAR } };
+export function applyMutator(id) {
+  Object.assign(BALL, BASE.ball);
+  Object.assign(CAR, BASE.car);
+  WORLD.gravity = GRAVITY;
+  WORLD.unlimitedBoost = false;
+  switch (id) {
+    case 'lowgrav': WORLD.gravity = GRAVITY * 0.42; break;
+    case 'bouncy': BALL.RESTITUTION = 0.92; BALL.DRAG = 0.01; BALL.SURFACE_FRICTION = 0.08; break;
+    case 'speed':
+      CAR.MAX_SPEED = BASE.car.MAX_SPEED * 1.25; CAR.MAX_THROTTLE_SPEED = BASE.car.MAX_THROTTLE_SPEED * 1.25;
+      CAR.THROTTLE_ACCEL = BASE.car.THROTTLE_ACCEL * 1.3; CAR.BOOST_ACCEL = BASE.car.BOOST_ACCEL * 1.35;
+      CAR.SUPERSONIC = BASE.car.SUPERSONIC * 1.25; BALL.MAX_SPEED = BASE.ball.MAX_SPEED * 1.2;
+      break;
+    case 'unlimited': WORLD.unlimitedBoost = true; break;
+    default: break;
+  }
+}
