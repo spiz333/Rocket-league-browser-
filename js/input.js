@@ -1,4 +1,4 @@
-// Touch (virtual stick + buttons), keyboard and gamepad input.
+// Touch (virtual stick + buttons), keyboard/mouse and gamepad input with rebindable controls.
 const DEAD = 0.12;
 const NO_PADS = [];
 
@@ -7,6 +7,53 @@ function dz(v) {
   if (a < DEAD) return 0;
   return Math.sign(v) * Math.min(1, (a - DEAD) / (1 - DEAD));
 }
+
+// [id, label, hold?]  hold actions are read every frame, the others fire once per press
+export const ACTIONS = [
+  ['forward', 'Drive forward · nose down'],
+  ['reverse', 'Reverse · nose up'],
+  ['left', 'Steer left'],
+  ['right', 'Steer right'],
+  ['jump', 'Jump'],
+  ['boost', 'Boost'],
+  ['slide', 'Powerslide'],
+  ['airroll', 'Air roll (hold + steer)'],
+  ['rollLeft', 'Air roll left'],
+  ['rollRight', 'Air roll right'],
+  ['ballcam', 'Ball cam'],
+  ['rear', 'Look behind'],
+  ['scoreboard', 'Scoreboard'],
+  ['pause', 'Pause'],
+];
+// actions the stick covers on a gamepad (not rebindable there)
+export const STICK_ACTIONS = new Set(['left', 'right']);
+export const DEFAULT_KEYS = {
+  forward: ['KeyW', 'ArrowUp'], reverse: ['KeyS', 'ArrowDown'], left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'],
+  jump: ['Space', 'Mouse2'], boost: ['ShiftLeft', 'Mouse0'], slide: ['ControlLeft', ''], airroll: ['KeyE', ''],
+  rollLeft: ['', ''], rollRight: ['', ''], ballcam: ['KeyC', ''], rear: ['KeyR', ''], scoreboard: ['Tab', ''], pause: ['Escape', 'KeyP'],
+};
+// standard gamepad layout indices: 0 A/✕ 1 B/○ 2 X/□ 3 Y/△ 4 LB 5 RB 6 LT 7 RT 8 View 9 Menu 10 LS 11 RS 12-15 d-pad
+export const DEFAULT_PAD = {
+  forward: 7, reverse: 6, left: -1, right: -1, jump: 0, boost: 1, slide: 2, airroll: 2,
+  rollLeft: 4, rollRight: 5, ballcam: 3, rear: 11, scoreboard: 8, pause: 9,
+};
+const PAD_NAMES = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'View', 'Menu', 'L-stick', 'R-stick', 'D-up', 'D-down', 'D-left', 'D-right', 'Home'];
+export function padLabel(i) { return i == null || i < 0 ? '—' : (PAD_NAMES[i] || 'Button ' + i); }
+export function keyLabel(code) {
+  if (!code) return '—';
+  if (code.startsWith('Key')) return code.slice(3);
+  if (code.startsWith('Digit')) return code.slice(5);
+  if (code.startsWith('Numpad')) return 'Num ' + code.slice(6);
+  const map = {
+    Mouse0: 'Left mouse', Mouse1: 'Middle mouse', Mouse2: 'Right mouse', Mouse3: 'Mouse 4', Mouse4: 'Mouse 5',
+    Space: 'Space', ShiftLeft: 'L-Shift', ShiftRight: 'R-Shift', ControlLeft: 'L-Ctrl', ControlRight: 'R-Ctrl',
+    AltLeft: 'L-Alt', AltRight: 'R-Alt', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→',
+    Escape: 'Esc', Tab: 'Tab', Enter: 'Enter', Backspace: 'Backspace', CapsLock: 'Caps',
+  };
+  return map[code] || code;
+}
+const EDGE = ['ballcam', 'pause'];
+const CHAT_KEYS = ['Digit1', 'Digit2', 'Digit3', 'Digit4'];
 
 export class Input {
   constructor(root) {
@@ -23,20 +70,54 @@ export class Input {
     this.stickBase = document.getElementById('stick-base');
     this.stickKnob = document.getElementById('stick-knob');
     this.stickRadius = 58;
-    this.mouseBoost = false;
     this.listeners = {};
     this.settings = { autoGas: true, invertPitch: false, vibrate: true, steerCurve: 1.3, stickFlip: false };
     this.flipQueue = null;
     this.lastOnGround = true;
     this.lastJumpOut = false;
     this.touchActive = false;
-    this.prevPad = {};
+    this.prevPad = [];
+    this.pad = { connected: false, steer: 0, up: 0, lookX: 0, lookY: 0, buttons: [] };
+    this.look = { x: 0, y: 0 };
+    this.held = { scoreboard: false, rear: false };
+    this.capturing = null;
     this.enabled = true;
+    this.setBindings(null, null);
     this._bind();
   }
 
   on(evt, fn) { (this.listeners[evt] ||= []).push(fn); }
   emit(evt, ...a) { (this.listeners[evt] || []).forEach(f => f(...a)); }
+
+  setBindings(keys, pad) {
+    this.keyBinds = {};
+    this.padBinds = {};
+    for (const [id] of ACTIONS) {
+      const k = keys && Array.isArray(keys[id]) ? keys[id] : DEFAULT_KEYS[id];
+      this.keyBinds[id] = [k[0] || '', k[1] || ''];
+      const pv = pad && typeof pad[id] === 'number' ? pad[id] : DEFAULT_PAD[id];
+      this.padBinds[id] = pv;
+    }
+    this.codeMap = new Map();
+    for (const [id, codes] of Object.entries(this.keyBinds)) {
+      for (const c of codes) if (c) { if (!this.codeMap.has(c)) this.codeMap.set(c, []); this.codeMap.get(c).push(id); }
+    }
+  }
+
+  // wait for the next key / mouse button / pad button and hand it to fn (rebinding)
+  capture(fn) { this.capturing = fn; }
+
+  down(action) {
+    const b = this.keyBinds[action];
+    return (b[0] && this.keys.has(b[0])) || (b[1] && this.keys.has(b[1]));
+  }
+
+  _press(code) {
+    const acts = this.codeMap.get(code);
+    if (acts) for (const a of acts) if (EDGE.includes(a)) this.emit(a);
+    const ci = CHAT_KEYS.indexOf(code);
+    if (ci >= 0) this.emit('chat', ci);
+  }
 
   _bind() {
     const zone = this.root;
@@ -49,27 +130,42 @@ export class Input {
     zone.addEventListener('contextmenu', e => e.preventDefault());
 
     window.addEventListener('keydown', e => {
+      if (this.capturing) {
+        e.preventDefault();
+        const fn = this.capturing; this.capturing = null;
+        fn(e.code === 'Escape' ? null : e.code);
+        return;
+      }
+      const typing = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA');
+      if (typing) return;
       if (e.repeat) { if (this._gameKey(e.code)) e.preventDefault(); return; }
       this.keys.add(e.code);
-      if (e.code === 'KeyC' || e.code === 'KeyY') this.emit('ballcam');
-      if (e.code === 'Escape' || e.code === 'KeyP') this.emit('pause');
+      this._press(e.code);
       if (this._gameKey(e.code)) e.preventDefault();
       this.emit('any');
     });
     window.addEventListener('keyup', e => this.keys.delete(e.code));
-    window.addEventListener('gamepadconnected', () => { this.padConnected = true; });
+    window.addEventListener('mousedown', e => {
+      if (!this.capturing) return;
+      e.preventDefault(); e.stopPropagation();
+      const fn = this.capturing; this.capturing = null;
+      fn('Mouse' + e.button);
+    }, true);
+    window.addEventListener('mouseup', e => this.keys.delete('Mouse' + e.button));
+    window.addEventListener('gamepadconnected', () => { this.padConnected = true; this.emit('pad', true); });
+    window.addEventListener('gamepaddisconnected', () => this.emit('pad', false));
     window.addEventListener('blur', () => { this.keys.clear(); this.rightTouches.clear(); this._resetStick(); });
   }
 
   _gameKey(code) {
-    return ['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ShiftLeft', 'ShiftRight', 'ControlLeft'].includes(code);
+    return this.enabled && (this.codeMap.has(code) || ['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(code));
   }
 
   _down(e) {
     if (!this.enabled) return;
     if (e.pointerType === 'mouse') {
-      if (e.button === 0) this.mouseBoost = true;
-      if (e.button === 2) this.keys.add('MouseRight');
+      this.keys.add('Mouse' + e.button);
+      this._press('Mouse' + e.button);
       return;
     }
     e.preventDefault();
@@ -133,8 +229,7 @@ export class Input {
 
   _up(e) {
     if (e.pointerType === 'mouse') {
-      if (e.button === 0) this.mouseBoost = false;
-      if (e.button === 2) this.keys.delete('MouseRight');
+      this.keys.delete('Mouse' + e.button);
       return;
     }
     if (e.pointerId === this.stick.id) this._resetStick();
@@ -206,7 +301,53 @@ export class Input {
     this.rightTouches.clear();
     this._updateButtons();
     this._resetStick();
-    this.mouseBoost = false;
+    for (const k of [...this.keys]) if (k.startsWith('Mouse')) this.keys.delete(k);
+  }
+
+  // Poll gamepads once per frame (menus + matches): menu navigation, rebinding, button edges.
+  pollPads() {
+    const pads = navigator.getGamepads ? navigator.getGamepads() : NO_PADS;
+    const P = this.pad;
+    P.connected = false; P.steer = 0; P.up = 0; P.lookX = 0; P.lookY = 0;
+    const cur = [];
+    for (const p of pads) {
+      if (!p || !p.connected) continue;
+      P.connected = true;
+      const ax = dz(p.axes[0] || 0), ay = dz(-(p.axes[1] || 0));
+      if (Math.abs(ax) > Math.abs(P.steer)) P.steer = ax;
+      if (Math.abs(ay) > Math.abs(P.up)) P.up = ay;
+      const lx = dz(p.axes[2] || 0), ly = dz(-(p.axes[3] || 0));
+      if (Math.abs(lx) > Math.abs(P.lookX)) P.lookX = lx;
+      if (Math.abs(ly) > Math.abs(P.lookY)) P.lookY = ly;
+      p.buttons.forEach((b, i) => { const v = b.value || (b.pressed ? 1 : 0); if (v > (cur[i] || 0)) cur[i] = v; });
+    }
+    P.buttons = cur;
+    const was = this.prevPad;
+    const pressed = (i) => (cur[i] || 0) > 0.5 && !((was[i] || 0) > 0.5);
+    // left stick / d-pad as menu directions
+    const navDir = P.up > 0.6 ? 'up' : P.up < -0.6 ? 'down' : P.steer < -0.6 ? 'left' : P.steer > 0.6 ? 'right' : null;
+    const now = performance.now();
+    if (this.capturing) {
+      for (let i = 0; i < cur.length; i++) if (pressed(i)) { const fn = this.capturing; this.capturing = null; fn('Pad' + i); break; }
+    } else if (P.connected) {
+      for (let i = 0; i < cur.length; i++) if (pressed(i)) {
+        this.emit('padbutton', i);
+        for (const a of EDGE) if (this.padBinds[a] === i) this.emit(a);
+        if (i >= 12 && i <= 15 && this.enabled) this.emit('chat', i - 12);
+        if (i === 0 || i === 9) this.emit('any');
+      }
+      const dpad = pressed(12) ? 'up' : pressed(13) ? 'down' : pressed(14) ? 'left' : pressed(15) ? 'right' : null;
+      if (dpad) this.emit('padnav', dpad);
+      // stick: first step immediately, then auto-repeat while held
+      if (navDir && navDir !== this.lastNav) { this.emit('padnav', navDir); this.nextNavT = now + 420; }
+      else if (navDir && now >= this.nextNavT) { this.emit('padnav', navDir); this.nextNavT = now + 170; }
+      this.lastNav = navDir;
+    }
+    this.prevPad = cur;
+    this.look.x = P.lookX; this.look.y = P.lookY;
+    const pb = (a) => { const i = this.padBinds[a]; return i >= 0 && (cur[i] || 0) > 0.5; };
+    this.held.scoreboard = this.down('scoreboard') || pb('scoreboard');
+    this.held.rear = this.down('rear') || pb('rear');
   }
 
   // Fill a controls object for the player car
@@ -223,17 +364,18 @@ export class Input {
     }
     // a tap on the JUMP button is a plain (double) jump; stick-direction flips are for pads/keyboards
     let noDodge = touchJump && !this.settings.stickFlip;
-    let jump = touchJump || k.has('Space') || k.has('KeyJ');
-    let boost = this.pressed.boost || k.has('ShiftLeft') || k.has('ShiftRight') || k.has('KeyK') || this.mouseBoost;
-    let drift = this.pressed.drift || k.has('ControlLeft') || k.has('KeyL') || k.has('MouseRight');
+    let jump = touchJump || this.down('jump');
+    let boost = this.pressed.boost || this.down('boost');
+    let drift = this.pressed.drift || this.down('slide');
+    let airRoll = this.down('airroll');
     let throttle = 0;
 
-    if (k.has('KeyA') || k.has('ArrowLeft')) steer -= 1;
-    if (k.has('KeyD') || k.has('ArrowRight')) steer += 1;
-    if (k.has('KeyW') || k.has('ArrowUp')) up += 1;
-    if (k.has('KeyS') || k.has('ArrowDown')) up -= 1;
-    if (k.has('KeyQ')) roll -= 1;
-    if (k.has('KeyE')) roll += 1;
+    if (this.down('left')) steer -= 1;
+    if (this.down('right')) steer += 1;
+    if (this.down('forward')) up += 1;
+    if (this.down('reverse')) up -= 1;
+    if (this.down('rollLeft')) roll -= 1;
+    if (this.down('rollRight')) roll += 1;
     throttle = up;
 
     // touch stick (with a response curve for finer steering)
@@ -253,26 +395,22 @@ export class Input {
       }
     }
 
-    // gamepad
-    const pads = this.padConnected && navigator.getGamepads ? navigator.getGamepads() : NO_PADS;
-    for (const p of pads) {
-      if (!p || !p.connected) continue;
-      const ax = dz(p.axes[0] || 0), ay = dz(-(p.axes[1] || 0));
-      if (Math.abs(ax) > Math.abs(steer)) steer = ax;
-      if (Math.abs(ay) > Math.abs(up)) up = ay;
-      const b = (i) => p.buttons[i] && (p.buttons[i].pressed || p.buttons[i].value > 0.3);
-      const val = (i) => (p.buttons[i] ? p.buttons[i].value : 0);
-      const trig = val(7) - val(6);
+    // gamepad (state read in pollPads)
+    const P = this.pad;
+    if (P.connected) {
+      const pb = this.padBinds, B = P.buttons;
+      const val = (a) => (pb[a] >= 0 ? B[pb[a]] || 0 : 0);
+      const on = (a) => val(a) > 0.4;
+      if (Math.abs(P.steer) > Math.abs(steer)) steer = P.steer;
+      if (Math.abs(P.up) > Math.abs(up)) up = P.up;
+      const trig = val('forward') - val('reverse');
       if (Math.abs(trig) > 0.05) throttle = trig;
-      if (b(0)) jump = true;
-      if (b(1)) boost = true;
-      if (b(2)) drift = true;
-      if (b(4)) roll = -1;
-      if (b(5)) roll = 1;
-      if (b(3) && !this.prevPad[3]) this.emit('ballcam');
-      if (b(9) && !this.prevPad[9]) this.emit('pause');
-      if ((b(0) && !this.prevPad[0]) || (b(9) && !this.prevPad[9])) this.emit('any');
-      this.prevPad = { 0: b(0), 3: b(3), 9: b(9) };
+      if (on('jump')) jump = true;
+      if (on('boost')) boost = true;
+      if (on('slide')) drift = true;
+      if (on('airroll')) airRoll = true;
+      if (on('rollLeft')) roll = -1;
+      if (on('rollRight')) roll = 1;
     }
 
     let fwd = up;
@@ -285,7 +423,7 @@ export class Input {
       if (q.i >= q.seq.length) this.flipQueue = null;
     }
 
-    if (!this.enabled) { steer = up = throttle = roll = fwd = 0; jump = boost = drift = false; this.flipQueue = null; }
+    if (!this.enabled) { steer = up = throttle = roll = fwd = 0; jump = boost = drift = airRoll = false; this.flipQueue = null; }
 
     const pitch = this.settings.invertPitch ? -up : up;
     this.lastOnGround = onGround;
@@ -297,6 +435,7 @@ export class Input {
     c.noDodge = noDodge;
     c.yaw = steer;
     c.roll = roll;
+    c.airRoll = airRoll;
     c.jump = jump;
     c.boost = boost;
     c.drift = drift;

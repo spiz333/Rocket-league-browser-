@@ -1,11 +1,12 @@
 // Visual construction of the stadium. Geometry follows the collision SDF.
 import * as THREE from '../vendor/three.module.min.js';
-import { ARENA, TEAM_COLORS, BOOST_PADS } from './config.js';
+import { ARENA, TEAM_COLORS, BOOST_PADS, onArenaChange } from './config.js';
 import { MAPS } from './maps.js';
 import { buildScenery } from './scenery.js';
 import { grassNormal, softNormal, metalNormal } from './textures.js';
 
-const { W, L, H, RC, RW, GW, GH, GD } = ARENA;
+let W, L, H, RC, RW, GW, GH, GD;
+onArenaChange((A) => { ({ W, L, H, RC, RW, GW, GH, GD } = A); });
 
 // ---------- perimeter of the rounded rectangle (top view) ----------
 function buildPerimeter() {

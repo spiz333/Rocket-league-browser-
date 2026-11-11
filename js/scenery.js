@@ -1,8 +1,9 @@
 // Scenery around the arena (per map), sky decorations and weather.
 import * as THREE from '../vendor/three.module.min.js';
-import { ARENA } from './config.js';
+import { ARENA, onArenaChange } from './config.js';
 
-const { W, L } = ARENA;
+let W, L;
+onArenaChange((A) => { ({ W, L } = A); });
 const rand = (a, b) => a + Math.random() * (b - a);
 
 function ringPos(minR, maxR, avoidStands = 40) {

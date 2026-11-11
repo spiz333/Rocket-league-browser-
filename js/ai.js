@@ -1,8 +1,9 @@
 // Rule-based bots: rotation roles, intercepts, dodges and (on hard) aerials.
 import * as THREE from '../vendor/three.module.min.js';
-import { ARENA, BALL, CAR, WORLD, DIFFICULTY, BOOST_PADS } from './config.js';
+import { ARENA, BALL, CAR, WORLD, DIFFICULTY, BOOST_PADS, onArenaChange } from './config.js';
 
-const { L, W, GW } = ARENA;
+let L, W, GW;
+onArenaChange((A) => { ({ L, W, GW } = A); });
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _qi = new THREE.Quaternion();

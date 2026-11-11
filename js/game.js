@@ -30,11 +30,11 @@ const r3 = (v) => Math.round(v * 1000) / 1000;
 
 export function packControls(c) {
   const r2 = (v) => Math.round((v || 0) * 100) / 100;
-  return [r2(c.throttle), r2(c.steer), r2(c.pitch), r2(c.yaw), r2(c.roll), r2(c.fwd ?? c.pitch), (c.jump ? 1 : 0) | (c.boost ? 2 : 0) | (c.drift ? 4 : 0) | (c.noDodge ? 8 : 0)];
+  return [r2(c.throttle), r2(c.steer), r2(c.pitch), r2(c.yaw), r2(c.roll), r2(c.fwd ?? c.pitch), (c.jump ? 1 : 0) | (c.boost ? 2 : 0) | (c.drift ? 4 : 0) | (c.noDodge ? 8 : 0) | (c.airRoll ? 16 : 0)];
 }
 export function unpackControls(a, c) {
   c.throttle = a[0]; c.steer = a[1]; c.pitch = a[2]; c.yaw = a[3]; c.roll = a[4]; c.fwd = a[5];
-  c.jump = !!(a[6] & 1); c.boost = !!(a[6] & 2); c.drift = !!(a[6] & 4); c.noDodge = !!(a[6] & 8);
+  c.jump = !!(a[6] & 1); c.boost = !!(a[6] & 2); c.drift = !!(a[6] & 4); c.noDodge = !!(a[6] & 8); c.airRoll = !!(a[6] & 16);
   return c;
 }
 

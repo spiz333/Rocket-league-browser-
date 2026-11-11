@@ -40,6 +40,10 @@ export class CameraRig {
     this.stiffness = 0.5;  // 0 = loose, 1 = locked to the car
     this.swivel = 4.5;     // max turn speed of the camera (rad/s)
     this.lookOffset = new THREE.Vector3(0, 1, 6);
+    this.lift = 0;         // ball cam: how far the camera swings down when the ball is high
+    this.lookYaw = 0;      // free look (right stick) / rear view offset
+    this.lookPitch = 0;
+    this.lookInput = { x: 0, y: 0, rear: false };
     this._snap = true;
   }
 
@@ -81,10 +85,32 @@ export class CameraRig {
       const step = diff * (1 - Math.exp(-(4 + this.stiffness * 8) * dt));
       this.yaw = wrap(this.yaw + THREE.MathUtils.clamp(step, -maxTurn, maxTurn));
     }
-    const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
+    // free look / look behind (right stick, rear-view key)
+    const li = this.lookInput;
+    const wantLY = li.rear ? Math.PI : li.x * Math.PI * 0.85;
+    const wantLP = li.rear ? 0 : li.y * 0.6;
+    const lk = this._snap ? 1 : 1 - Math.exp(-14 * dt);
+    this.lookYaw = wrap(this.lookYaw + wrap(wantLY - this.lookYaw) * lk);
+    this.lookPitch += (wantLP - this.lookPitch) * lk;
+    const looking = Math.abs(this.lookYaw) > 0.08 || Math.abs(this.lookPitch) > 0.05;
+    const yawNow = this.yaw + this.lookYaw;
+    const fx = Math.sin(yawNow), fz = Math.cos(yawNow);
+
+    // ball cam: when the ball is high above, swing the camera down behind the car (and back a bit)
+    // so the view can tilt up far enough to keep the ball on screen
+    let wantLift = 0;
+    if (this.ballCam && !looking) {
+      const elev = Math.atan2(ballPos.y - carPos.y, Math.max(0.5, flatDist));
+      wantLift = THREE.MathUtils.clamp((elev - 0.3) * 0.85, 0, 0.95);
+    }
+    this.lift += (wantLift - this.lift) * (this._snap ? 1 : 1 - Math.exp(-4 * dt));
+    const cl = Math.cos(this.lift), sl = Math.sin(this.lift);
+    const back = this.distance * (1 + 0.8 * this.lift);
+    const camBack = back * cl + this.height * sl;
+    const camUp = this.height * cl - back * sl;
 
     // ---- camera offset relative to the car
-    _o.set(-fx * this.distance, this.height, -fz * this.distance);
+    _o.set(-fx * camBack, camUp, -fz * camBack);
     if (onWall > 0) {
       // on walls: stand off the surface and trail the car along the wall
       _t1.copy(_f).addScaledVector(car.normal, -_f.dot(car.normal));
@@ -93,7 +119,7 @@ export class CameraRig {
       _t2.copy(car.normal).multiplyScalar(this.distance * 0.75 + 0.5)
         .addScaledVector(_t1, -this.distance * 0.6)
         .addScaledVector(UP, this.height * 0.5);
-      _o.lerp(_t2, onWall);
+      _o.lerp(_t2, onWall * (looking ? 0.3 : 1));
     }
     const k = this._snap ? 1 : 1 - Math.exp(-(6 + this.stiffness * 16) * dt);
     this.offset.lerp(_o, k);
@@ -125,22 +151,25 @@ export class CameraRig {
 
     // ---- look target
     const tilt = THREE.MathUtils.degToRad(this.angle);
-    if (this.ballCam) {
+    if (this.ballCam && !looking) {
       const toCarH = Math.hypot(carPos.x - _p.x, carPos.z - _p.z);
       const carPitch = Math.atan2(carPos.y - _p.y + 0.15, Math.max(0.5, toCarH));
       const lookH = Math.hypot(ballPos.x - _p.x, ballPos.z - _p.z);
-      let pitch = Math.atan2(ballPos.y - _p.y, Math.max(0.5, lookH));
+      const ballPitch = Math.atan2(ballPos.y - _p.y, Math.max(0.5, lookH));
       const halfV = THREE.MathUtils.degToRad(this.camera.fov) / 2;
-      pitch = THREE.MathUtils.clamp(pitch, carPitch - halfV * 0.3, carPitch + halfV * 0.8);
-      this.pitch = this._snap ? pitch : this.pitch + (pitch - this.pitch) * (1 - Math.exp(-8 * dt));
+      let pitch = THREE.MathUtils.clamp(ballPitch, carPitch - halfV * 0.3, carPitch + halfV * 0.85);
+      // the ball always wins: never let it leave the top of the screen
+      pitch = Math.max(pitch, ballPitch - halfV * 0.82);
+      this.pitch = this._snap ? pitch : this.pitch + (pitch - this.pitch) * (1 - Math.exp(-9 * dt));
     } else {
-      const target = Math.atan2(carPos.y + 0.9 - _p.y, 4 + this.distance) + tilt;
+      const target = Math.atan2(carPos.y + 0.9 - _p.y, 4 + this.distance) + tilt + this.lookPitch;
       this.pitch = this._snap ? target : this.pitch + (target - this.pitch) * (1 - Math.exp(-10 * dt));
     }
     _d.set(fx * Math.cos(this.pitch), Math.sin(this.pitch), fz * Math.cos(this.pitch));
     // on walls the camera sits beside the car, so aim at a point just past the car instead
     // ...and do the same whenever a wall has pushed the camera far from where it wanted to be
-    const aim = Math.max(onWall, Math.min(1, this.push.length() / 1.2));
+    // (only sideways pushes count: the floor pushing a low ball-cam camera up is expected)
+    const aim = looking ? 0 : Math.max(onWall, Math.min(1, Math.hypot(this.push.x, this.push.z) / 1.2));
     this.wallBlend += (aim - this.wallBlend) * (1 - Math.exp(-6 * dt));
     if (this.wallBlend > 0.01) {
       if (this.ballCam) {

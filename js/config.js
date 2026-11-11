@@ -1,15 +1,26 @@
 // Global tuning constants. Units are roughly meters / seconds.
 
-export const ARENA = {
-  W: 34,     // half width (x)
-  L: 46,     // half length (z) — goal line position
-  H: 18,     // ceiling height
-  RC: 11,    // radius of the vertical corners (top view)
+// Standard field (half sizes). Map-size options scale W/L/H from these values.
+export const STD_ARENA = {
+  W: 41,     // half width (x)
+  L: 51.2,   // half length (z) — goal line position
+  H: 20.4,   // ceiling height
+  RC: 13,    // radius of the vertical corners (top view)
   RW: 4,     // radius of the floor/ceiling-to-wall curves
-  GW: 8,     // goal half width
-  GH: 6.4,   // goal height
-  GD: 6.5,   // goal depth
+  GW: 8.9,   // goal half width
+  GH: 6.43,  // goal height
+  GD: 8.8,   // goal depth
 };
+// live arena dimensions (mutable: changed by the arena size setting before a match)
+export const ARENA = { ...STD_ARENA, size: 'standard' };
+export const ARENA_SIZES = [
+  { id: 'small', name: 'Small', s: 0.8 },
+  { id: 'standard', name: 'Standard', s: 1 },
+  { id: 'large', name: 'Large', s: 1.22 },
+  { id: 'huge', name: 'Huge', s: 1.5 },
+];
+const arenaListeners = [];
+export function onArenaChange(fn) { arenaListeners.push(fn); fn(ARENA); }
 
 export const GRAVITY = 6.5;
 // live physics values that arcade mutators may change for a match
@@ -49,9 +60,14 @@ export const CAR = {
   DODGE_IMPULSE: 5.0,
   DODGE_TIME: 0.62,
   STICKY: 3.25,
-  AIR_PITCH: 5.2,
-  AIR_YAW: 4.2,
-  AIR_ROLL: 5.5,
+  // air control: angular acceleration per full stick input and damping (rad/s^2, 1/s).
+  // Pitch and yaw only damp when their stick is released; roll always damps.
+  T_PITCH: 12.15,
+  T_YAW: 8.92,
+  T_ROLL: 36.08,
+  D_PITCH: 2.8,
+  D_YAW: 1.89,
+  D_ROLL: 4.47,
   MAX_ANG: 5.5,
 };
 
@@ -60,7 +76,8 @@ export const TEAM_COLORS = [
   { main: 0xff3347, dark: 0x8a0f1c, glow: 0xff6a77, css: '#ff3d50', name: 'ROOD' },
 ];
 
-export const BOOST_PADS = (() => {
+// pad layout designed for a 34 x 46 half field; scaled to whatever the arena is
+const PAD_LAYOUT = (() => {
   const big = [
     [-29, 0], [29, 0],
     [-28, -38], [28, -38], [-28, 38], [28, 38],
@@ -76,20 +93,40 @@ export const BOOST_PADS = (() => {
     [-31, -18], [31, -18], [-31, 18], [31, 18],
   ];
   return [
-    ...big.map(([x, z]) => ({ x, z, big: true })),
-    ...small.map(([x, z]) => ({ x, z, big: false })),
+    ...big.map(([x, z]) => ({ x: x / 34, z: z / 46, big: true })),
+    ...small.map(([x, z]) => ({ x: x / 34, z: z / 46, big: false })),
   ];
 })();
+export const BOOST_PADS = PAD_LAYOUT.map(p => ({ ...p }));
 
 // Kickoff spawn positions for the team that defends the -z goal (blue).
-// The other team gets the mirrored positions.
-export const KICKOFF_SPOTS = [
-  { x: -17, z: -21 },   // diagonal left
-  { x: 17, z: -21 },    // diagonal right
-  { x: -2.5, z: -32 },  // off-center left
-  { x: 2.5, z: -32 },   // off-center right
-  { x: 0, z: -40 },     // back
+// The other team gets the mirrored positions. (fractions of the half field)
+const KICKOFF_LAYOUT = [
+  { x: -0.5, z: -0.457 },  // diagonal left
+  { x: 0.5, z: -0.457 },   // diagonal right
+  { x: -0.0625, z: -0.7 }, // off-center left
+  { x: 0.0625, z: -0.7 },  // off-center right
+  { x: 0, z: -0.87 },      // back
 ];
+export const KICKOFF_SPOTS = KICKOFF_LAYOUT.map(p => ({ ...p }));
+
+export function setArenaSize(id) {
+  const def = ARENA_SIZES.find(a => a.id === id) || ARENA_SIZES[1];
+  const s = def.s;
+  ARENA.size = def.id;
+  ARENA.W = STD_ARENA.W * s;
+  ARENA.L = STD_ARENA.L * s;
+  ARENA.H = STD_ARENA.H * (0.6 + 0.4 * s);
+  ARENA.RC = STD_ARENA.RC * s;
+  PAD_LAYOUT.forEach((p, i) => { BOOST_PADS[i].x = p.x * ARENA.W; BOOST_PADS[i].z = p.z * ARENA.L; });
+  KICKOFF_LAYOUT.forEach((p, i) => {
+    // the off-centre / back spots stay close to the goal, diagonals scale with the field
+    KICKOFF_SPOTS[i].x = p.x * Math.min(ARENA.W, STD_ARENA.W * Math.max(1, s * 0.9));
+    KICKOFF_SPOTS[i].z = p.z * ARENA.L;
+  });
+  arenaListeners.forEach(fn => fn(ARENA));
+}
+setArenaSize('standard');
 
 export const KICKOFF_SETS = {
   1: [[0]],

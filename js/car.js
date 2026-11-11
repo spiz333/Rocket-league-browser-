@@ -39,7 +39,7 @@ for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
 }
 
 export function emptyControls() {
-  return { throttle: 0, steer: 0, pitch: 0, yaw: 0, roll: 0, jump: false, boost: false, drift: false };
+  return { throttle: 0, steer: 0, pitch: 0, yaw: 0, roll: 0, jump: false, boost: false, drift: false, airRoll: false };
 }
 
 let carId = 0;
@@ -223,13 +223,13 @@ export class Car {
         this.onGround = false;
         this.sinceJump = 0;
         this.squash = 1;
-        if (this.latchPitch && Math.abs(c.pitch) > 0.3) this.pitchLatch = Math.sign(c.pitch);
+        if (this.latchPitch && c.pitch > 0.3) this.pitchLatch = 1; // held forward to drive: ignore until re-pressed (holding back = aerial)
         if (this.events && this.events.jump) this.events.jump(this);
       }
     } else {
       if (this.onGround) {
         // drove off a surface without jumping: still allow a flip / double jump
-        if (this.latchPitch && Math.abs(c.pitch) > 0.3) this.pitchLatch = Math.sign(c.pitch);
+        if (this.latchPitch && c.pitch > 0.3) this.pitchLatch = 1; // held forward to drive: ignore until re-pressed (holding back = aerial)
         this.onGround = false;
         this.jumped = true;
         this.sinceJump = 0.2;
@@ -251,7 +251,7 @@ export class Car {
         // touch taps always double jump (touch players flip with a swipe instead)
         if (mag > 0.5 && !c.noDodge) {
           this.startDodge(f / mag, s / mag);
-          if (this.latchPitch && Math.abs(c.pitch) > 0.3) this.pitchLatch = Math.sign(c.pitch);
+          if (this.latchPitch && c.pitch > 0.3) this.pitchLatch = 1; // held forward to drive: ignore until re-pressed (holding back = aerial)
         } else {
           this.vel.addScaledVector(up, CAR.DOUBLE_JUMP_IMPULSE);
           if (this.events && this.events.jump) this.events.jump(this);
@@ -287,14 +287,16 @@ export class Car {
         this.angVel.copy(_w).applyQuaternion(this.quat);
         _w.set(0, 0, 0); // orientation already set: skip integration below
       } else {
-        const roll = c.roll !== 0 ? c.roll : (c.drift ? c.yaw : 0);
-        const yaw = c.drift ? 0 : c.yaw;
+        // holding air roll turns left/right into roll; directional roll buttons roll on their own
+        const free = c.airRoll || c.drift;
+        let roll = c.roll || 0;
+        let yaw = c.yaw;
+        if (free) { if (roll === 0) roll = yaw; yaw = 0; }
         const pitch = this.airPitch(c);
-        const resp = Math.min(1, 9 * dt);
-        const damp = Math.min(1, 3.2 * dt);
-        _w.x = pitch !== 0 ? _w.x + (pitch * CAR.AIR_PITCH - _w.x) * resp : _w.x * (1 - damp);
-        _w.y = yaw !== 0 ? _w.y + (-yaw * CAR.AIR_YAW - _w.y) * resp : _w.y * (1 - damp);
-        _w.z = roll !== 0 ? _w.z + (roll * CAR.AIR_ROLL - _w.z) * resp : _w.z * (1 - damp * 1.4);
+        const ap = Math.abs(pitch), ay = Math.abs(yaw);
+        _w.x += (CAR.T_PITCH * pitch - CAR.D_PITCH * (1 - ap) * _w.x) * dt;
+        _w.y += (-CAR.T_YAW * yaw - CAR.D_YAW * (1 - ay) * _w.y) * dt;
+        _w.z += (CAR.T_ROLL * roll - CAR.D_ROLL * _w.z) * dt;
       }
       const scripted = this.dodging > 0;
       if (!scripted) this.angVel.copy(_w).applyQuaternion(this.quat);
@@ -302,7 +304,7 @@ export class Car {
       if (wl > CAR.MAX_ANG && !scripted) this.angVel.multiplyScalar(CAR.MAX_ANG / wl);
       const w = scripted ? 0 : this.angVel.length();
       // landing assist: falling towards a surface without stick input -> gently turn wheels down
-      if (this.assist && this.dodging <= 0 && this.righting <= 0 && this.airPitch(c) === 0 && c.roll === 0 && !c.drift && this.vel.y < 0) {
+      if (this.assist && this.dodging <= 0 && this.righting <= 0 && this.airPitch(c) === 0 && !c.roll && !c.drift && !c.airRoll && !c.yaw && this.vel.y < 0) {
         const dd = sdf(this.pos.x, this.pos.y, this.pos.z);
         if (dd < 3.2) {
           sdfNormal(this.pos.x, this.pos.y, this.pos.z, _n);

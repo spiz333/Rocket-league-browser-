@@ -1,14 +1,20 @@
 // Signed distance field describing the free space of the arena.
 // sdf(x,y,z) > 0 inside the playable volume (distance to the nearest wall),
 // < 0 inside walls. Used by ball, car and camera collision.
-import { ARENA } from './config.js';
+import { onArenaChange } from './config.js';
 
-const { W, L, H, RC, RW, GW, GH, GD } = ARENA;
-const GM = RW + 1.0;            // goal box reaches this far into the arena
-const GBZ = (GD + GM) / 2;      // goal box half-extent along z
-const GCZ = L - GM + GBZ;       // goal box center |z|
-const GHY = GH / 2;
-const HH = H / 2;
+let W, L, H, RC, RW, GW, GH, GD, GM, GBZ, GCZ, GHY, HH, EARLY;
+const K = 1.4;   // rounding radius where the goal mouth meets the walls (posts + crossbar)
+const GFLOOR = 2; // goal boxes reach below the floor so the floor stays perfectly flat in the mouth
+onArenaChange((A) => {
+  ({ W, L, H, RC, RW, GW, GH, GD } = A);
+  GM = RW + 1.0;            // goal box reaches this far into the arena
+  GBZ = (GD + GM) / 2;      // goal box half-extent along z
+  GCZ = L - GM + GBZ;       // goal box center |z|
+  GHY = (GH + GFLOOR) / 2;  // goal box half height (from -GFLOOR to GH)
+  HH = H / 2;
+  EARLY = L - GM - K - 1;
+});
 
 function arenaSolid(x, y, z) {
   // 2D rounded rectangle (top view)
@@ -27,7 +33,7 @@ function arenaSolid(x, y, z) {
 
 function goalSolid(x, y, z) {
   const qx = Math.abs(x) - GW;
-  const qy = Math.abs(y - GHY) - GHY;
+  const qy = Math.abs(y - GH + GHY) - GHY;
   const qz = Math.abs(Math.abs(z) - GCZ) - GBZ;
   const ox = qx > 0 ? qx : 0;
   const oy = qy > 0 ? qy : 0;
@@ -38,9 +44,14 @@ function goalSolid(x, y, z) {
 export function sdf(x, y, z) {
   const a = arenaSolid(x, y, z);
   // cheap early out: goal boxes only matter near the end walls
-  if (Math.abs(z) < L - GM - 2) return -a;
+  if (Math.abs(z) < EARLY) return -a;
   const g = goalSolid(x, y, z);
-  return -(a < g ? a : g);
+  // smooth union of the arena and goal volumes rounds the posts and the crossbar,
+  // so cars roll from the floor/back wall around the goal frame instead of snagging on an edge
+  const h = K - Math.abs(a - g);
+  const u = h > 0 ? Math.min(a, g) - h * h / (4 * K) : Math.min(a, g);
+  // ...and a flat floor everywhere (the goal box itself extends below it)
+  return Math.min(-u, y);
 }
 
 const E = 0.004;

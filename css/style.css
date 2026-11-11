@@ -786,3 +786,20 @@ body.show-fps #fps { display: block; }
   .g-item { height: 80px; }
   .credits { font-size: 13px; padding: 4px 8px; }
 }
+
+/* ---------- bindings ---------- */
+.set-card.wide { grid-column: 1 / -1; }
+.set-card h3 small { display: block; margin-top: 4px; font-size: 10px; letter-spacing: 0.04em; text-transform: none; color: var(--dim, #8a94ad); font-weight: 600; }
+.bind-wrap { overflow-x: auto; }
+table.binds { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 10px; }
+table.binds th { text-align: left; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: #8a94ad; padding: 4px 6px; }
+table.binds td { padding: 3px 6px; border-top: 1px solid rgba(255,255,255,0.06); white-space: nowrap; }
+.bind { min-width: 104px; padding: 5px 10px; font: inherit; font-weight: 800; color: #e8eefc; background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.14); cursor: pointer; text-align: center; display: inline-block; }
+.bind:hover { border-color: var(--nitro); }
+.bind.pad { color: #ffd76a; }
+.bind.fixed { opacity: 0.55; cursor: default; }
+.bind.listening { background: var(--nitro); color: #061018; animation: bindPulse 0.8s ease-in-out infinite alternate; }
+@keyframes bindPulse { from { opacity: 1; } to { opacity: 0.6; } }
+/* controller focus ring */
+body.pad-nav :focus { outline: 3px solid #59f3ff; outline-offset: 2px; box-shadow: 0 0 18px rgba(89,243,255,0.55); }

@@ -2,7 +2,7 @@ import * as THREE from '../vendor/three.module.min.js';
 import { buildArena, BoostPadsView } from './arenaView.js';
 import { Particles } from './effects.js';
 import { Audio } from './audio.js';
-import { Input } from './input.js';
+import { Input, ACTIONS, DEFAULT_KEYS, DEFAULT_PAD, keyLabel, padLabel, STICK_ACTIONS } from './input.js';
 import { Hud } from './hud.js';
 import { CameraRig } from './camera.js';
 import { Game } from './game.js';
@@ -31,6 +31,7 @@ const DEFAULTS = {
   steerCurve: 1.3, btnSize: 'normal', assist: 1, name: '', look: defaultLook(),
   profile: { xp: 0, level: 1, matches: 0, wins: 0, goals: 0 },
   credits: STARTING_CREDITS, inventory: defaultInventory(), mutator: 'none', challengeBest: 0,
+  keys: null, pad: null,
 };
 let settings = { ...DEFAULTS };
 try {
@@ -227,6 +228,7 @@ if (quality === 'high') {
 }
 
 function applySettings() {
+  input.setBindings(settings.keys, settings.pad);
   input.settings.autoGas = !!+settings.autoGas;
   input.settings.invertPitch = !!+settings.invertPitch;
   input.settings.vibrate = !!+settings.vibrate;
@@ -285,6 +287,9 @@ function showScreen(name) {
   if (name === 'garage' || name === 'shop') enterGarage();
   else if (appMode === 'garage') exitGarage();
   if (name === 'main') { refreshProfile(); refreshCredits(); }
+  if (name === 'settings') renderBinds();
+  // controller users: focus the first control of the new screen
+  if (document.body.classList.contains('pad-nav')) requestAnimationFrame(() => { const f = focusables()[0]; if (f) f.focus({ preventScroll: true }); });
 }
 function hideScreens() {
   for (const s of screens) $('screen-' + s).classList.add('hidden');
@@ -391,6 +396,10 @@ document.addEventListener('click', e => {
     case 'leave': leaveSession(); showScreen('online'); break;
     case 'switch-team': switchTeam(); break;
     case 'net-start': hostStartMatch(); break;
+    case 'binds-reset':
+      settings.keys = null; settings.pad = null; saveSettings();
+      input.setBindings(null, null); renderBinds();
+      break;
     case 'cam-reset':
       for (const k of ['camFov', 'camDist', 'camHeight', 'camAngle', 'camStiff', 'camSwivel', 'camShake']) settings[k] = DEFAULTS[k];
       saveSettings(); applySettings(); syncSegments();
@@ -802,6 +811,87 @@ input.on('pause', () => {
   if (appMode !== 'match') return;
   if (current === 'pause') resume(); else pause();
 });
+// ---------- controller: menu navigation ----------
+function focusables() {
+  const root = current ? $('screen-' + current) : null;
+  if (!root) return [];
+  return [...root.querySelectorAll('button, input, select, [data-go], [data-action], .map-card, .g-item')]
+    .filter(el => el.offsetParent !== null && !el.disabled && !el.closest('.hidden'));
+}
+input.on('padnav', (dir) => {
+  if (!current || input.capturing) return;
+  document.body.classList.add('pad-nav');
+  const els = focusables();
+  if (!els.length) return;
+  const cur = document.activeElement;
+  if (!els.includes(cur)) { els[0].focus(); return; }
+  if (cur.type === 'range' && (dir === 'left' || dir === 'right')) {
+    const st = +cur.step || 1;
+    cur.value = Math.max(+cur.min, Math.min(+cur.max, +cur.value + (dir === 'left' ? -st : st)));
+    cur.dispatchEvent(new Event('input', { bubbles: true }));
+    return;
+  }
+  const r = cur.getBoundingClientRect();
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  let best = null, bs = Infinity;
+  for (const el of els) {
+    if (el === cur) continue;
+    const q = el.getBoundingClientRect();
+    const x = q.left + q.width / 2 - cx, y = q.top + q.height / 2 - cy;
+    const along = dir === 'left' ? -x : dir === 'right' ? x : dir === 'up' ? -y : y;
+    const across = dir === 'left' || dir === 'right' ? Math.abs(y) : Math.abs(x);
+    if (along <= 4) continue;
+    const sc = along + across * 2.2;
+    if (sc < bs) { bs = sc; best = el; }
+  }
+  if (best) { best.focus({ preventScroll: true }); best.scrollIntoView({ block: 'nearest', inline: 'nearest' }); audio.hover(); }
+});
+input.on('padbutton', (i) => {
+  if (!current || input.capturing) return;
+  if (i === 0) {
+    const el = document.activeElement;
+    if (el && el !== document.body && focusables().includes(el)) { el.click(); document.body.classList.add('pad-nav'); }
+    else { const f = focusables()[0]; if (f) { f.focus(); document.body.classList.add('pad-nav'); } }
+  } else if (i === 1) {
+    if (current === 'pause') { resume(); return; }
+    const b = $('screen-' + current).querySelector('.back, [data-back]');
+    if (b) b.click();
+  }
+});
+window.addEventListener('pointermove', () => document.body.classList.remove('pad-nav'), { passive: true });
+
+// ---------- key / button bindings ----------
+function renderBinds() {
+  const tb = $('bind-rows');
+  if (!tb) return;
+  const keys = input.keyBinds, pad = input.padBinds;
+  tb.innerHTML = ACTIONS.map(([id, label]) => `<tr><td>${label}</td>
+    <td><button class="bind" data-bind="${id}:0">${keyLabel(keys[id][0])}</button></td>
+    <td><button class="bind" data-bind="${id}:1">${keyLabel(keys[id][1])}</button></td>
+    <td>${STICK_ACTIONS.has(id) ? '<span class="bind fixed">Left stick</span>' : `<button class="bind pad" data-bind="${id}:pad">${padLabel(pad[id])}</button>`}</td></tr>`).join('');
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-bind]');
+  if (!b || input.capturing) return;
+  const [id, slot] = b.dataset.bind.split(':');
+  b.classList.add('listening');
+  b.textContent = slot === 'pad' ? 'Press a button…' : 'Press a key…';
+  // let this click finish before we start listening (so it isn't captured itself)
+  setTimeout(() => input.capture((code) => {
+    if (!settings.keys) settings.keys = JSON.parse(JSON.stringify(input.keyBinds));
+    if (!settings.pad) settings.pad = { ...input.padBinds };
+    if (code === 'Backspace' || code === 'Delete') {
+      if (slot === 'pad') settings.pad[id] = -1; else settings.keys[id][+slot] = '';
+    } else if (code) {
+      if (slot === 'pad') { if (code.startsWith('Pad')) settings.pad[id] = +code.slice(3); }
+      else if (!code.startsWith('Pad')) settings.keys[id][+slot] = code;
+    }
+    saveSettings();
+    input.setBindings(settings.keys, settings.pad);
+    renderBinds();
+  }), 0);
+});
+
 input.on('any', () => {
   if (appMode === 'match' && game.state === 'replay' && game.role !== 'client') game.skipReplay();
   if (appMode === 'match') document.body.classList.add('played');
@@ -1097,6 +1187,7 @@ function frame(now) {
   last = now;
   elapsed += dt;
   adaptResolution(rawDt, dt);
+  input.pollPads();
 
   if (appMode === 'garage') {
     previewSpin += dt * 0.4;
@@ -1168,6 +1259,7 @@ let attractTimer = 0;
 let attractFollow = null;
 function updateCamera(dt) {
   const st = game.state;
+  rig.lookInput.x = 0; rig.lookInput.y = 0; rig.lookInput.rear = false;
   if (appMode === 'menu') {
     attractTimer -= dt;
     if (attractTimer <= 0) {
@@ -1206,6 +1298,9 @@ function updateCamera(dt) {
     return;
   }
   const p = game.player;
+  const li = rig.lookInput;
+  const canLook = input.enabled && st !== 'goal';
+  li.x = canLook ? input.look.x : 0; li.y = canLook ? input.look.y : 0; li.rear = canLook && input.held.rear;
   if (p && !p.demolished) rig.follow(p, p.renderPos, game.ball.renderPos, dt);
   else {
     _from.copy(rig.pos);
