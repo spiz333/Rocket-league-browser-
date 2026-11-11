@@ -184,11 +184,12 @@ export class CameraRig {
   apply(dt) {
     this.camera.position.copy(this.pos);
     if (this.shakeAmt > 0.001) {
-      const s = this.shakeAmt;
-      this.camera.position.x += (Math.random() - 0.5) * s;
-      this.camera.position.y += (Math.random() - 0.5) * s;
-      this.camera.position.z += (Math.random() - 0.5) * s;
-      this.shakeAmt *= Math.exp(-6 * dt);
+      // smooth layered sine noise instead of random jumps every frame
+      const s = this.shakeAmt * 0.45, t = this.time;
+      this.camera.position.x += s * (Math.sin(t * 31.0) * 0.6 + Math.sin(t * 17.3 + 1.7) * 0.4);
+      this.camera.position.y += s * (Math.sin(t * 27.1 + 0.4) * 0.6 + Math.sin(t * 13.9 + 2.3) * 0.4);
+      this.camera.position.z += s * (Math.sin(t * 23.7 + 2.9) * 0.6 + Math.sin(t * 19.1 + 0.8) * 0.4);
+      this.shakeAmt *= Math.exp(-4.5 * dt);
     }
     this.camera.lookAt(this.look);
     const f = this.baseFov + this.speedFov;

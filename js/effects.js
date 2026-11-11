@@ -25,15 +25,15 @@ export class Particles {
     geo.setAttribute('pcolor', this.colAttr);
     geo.setAttribute('psize', this.sizeAttr);
     this.material = new THREE.ShaderMaterial({
-      uniforms: { scale: { value: 500 } },
+      uniforms: { scale: { value: 500 }, maxSize: { value: 256 } },
       vertexShader: `
         attribute vec4 pcolor; attribute float psize;
-        uniform float scale;
+        uniform float scale; uniform float maxSize;
         varying vec4 vColor;
         void main(){
           vColor = pcolor;
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          gl_PointSize = psize * scale / max(0.1, -mv.z);
+          gl_PointSize = min(maxSize, psize * scale / max(0.1, -mv.z));
           gl_Position = projectionMatrix * mv;
         }`,
       fragmentShader: `
@@ -61,6 +61,7 @@ export class Particles {
 
   setScale(viewportHeight, fov) {
     this.material.uniforms.scale.value = viewportHeight / (2 * Math.tan(THREE.MathUtils.degToRad(fov) / 2));
+    this.material.uniforms.maxSize.value = Math.max(32, viewportHeight * 0.22);
   }
 
   spawn(x, y, z, vx, vy, vz, life, size, r, g, b, a = 1, opts) {

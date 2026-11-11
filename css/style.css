@@ -258,12 +258,12 @@ b.t1 { color: #ff8a96; }
 #center-msg.show { opacity: 1; transform: scale(1); }
 #center-msg.count { color: #fff; }
 #center-msg.go { color: var(--nitro); }
-#center-msg.goal { font-size: min(24vh, 150px); animation: goalPulse 0.6s ease-in-out infinite alternate; }
+#center-msg.goal { font-size: min(24vh, 150px); }
 #center-msg.goal.t0, #center-msg.save.t0 { color: #7cc0ff; -webkit-text-stroke: 2px #fff; }
 #center-msg.goal.t1, #center-msg.save.t1 { color: #ff8a96; -webkit-text-stroke: 2px #fff; }
 #center-msg.overtime { color: var(--accent); font-size: min(14vh, 80px); }
 #center-msg.save { font-size: min(12vh, 64px); }
-@keyframes goalPulse { from { letter-spacing: 0.02em; } to { letter-spacing: 0.12em; } }
+
 
 #sub-msg {
   position: absolute; top: 60%; left: 0; right: 0;
@@ -642,7 +642,7 @@ body.replay #scoreboard { transform: translateX(-50%) translateY(-6px) scale(0.8
   pointer-events: none; opacity: 0;
 }
 #goal-banner .gb-band {
-  position: relative; width: 100%; padding: 1.6vh 0 1.4vh;
+  position: relative; width: 100%; padding: 1.6vh 0 1.4vh; will-change: transform;
   display: flex; flex-direction: column; align-items: center; overflow: hidden;
   transform: scaleY(0); transition: transform 0.25s cubic-bezier(.2,1.4,.4,1);
 }
@@ -651,17 +651,20 @@ body.replay #scoreboard { transform: translateX(-50%) translateY(-6px) scale(0.8
 #goal-banner.show { opacity: 1; }
 #goal-banner.show .gb-band { transform: scaleY(1); }
 .gb-stripes {
-  position: absolute; inset: 0;
+  position: absolute; top: 0; bottom: 0; left: -80px; right: -80px;
   background: repeating-linear-gradient(115deg, rgba(255,255,255,0.0) 0 22px, rgba(255,255,255,0.09) 22px 30px);
   animation: stripes 0.8s linear infinite;
+  will-change: transform;
 }
-@keyframes stripes { to { background-position: 64px 0; } }
+/* transform-only animations run on the compositor and never trigger layout */
+@keyframes stripes { from { transform: translateX(0); } to { transform: translateX(64px); } }
 .gb-title {
   position: relative; font-size: min(17vh, 104px); font-weight: 900; font-style: italic; letter-spacing: 0.12em;
   line-height: 1; text-shadow: 0 4px 0 rgba(0,0,0,0.25), 0 0 30px rgba(255,255,255,0.45);
-  animation: goalIn 0.6s cubic-bezier(.2,1.5,.4,1);
+  animation: goalIn 0.55s cubic-bezier(.2,1.5,.4,1);
+  will-change: transform, opacity;
 }
-@keyframes goalIn { from { letter-spacing: 0.8em; opacity: 0; } to { letter-spacing: 0.12em; opacity: 1; } }
+@keyframes goalIn { from { transform: scale(1.8, 0.6); opacity: 0; } to { transform: none; opacity: 1; } }
 .gb-sub { position: relative; font-size: 17px; font-weight: 800; letter-spacing: 0.08em; margin-top: 4px; }
 .gb-speed { position: relative; font-size: 12px; font-weight: 800; letter-spacing: 0.25em; opacity: 0.85; margin-top: 2px; }
 

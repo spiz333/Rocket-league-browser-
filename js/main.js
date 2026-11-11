@@ -780,6 +780,7 @@ function showEnd(res) {
 }
 
 game.onStateChange = (s) => {
+  if (s === 'replay') replayCar.has = false;
   document.body.classList.toggle('replay', s === 'replay');
   if (s === 'replay') hud.clearMessage();
 };
@@ -1143,6 +1144,25 @@ function adaptResolution(rawDt, dt) {
 }
 
 let replayGoalCam = false;
+// stand-in for the scorer's car during replays (heading/speed come from the recording)
+const _rv = new THREE.Vector3();
+const replayCar = {
+  quat: new THREE.Quaternion(), vel: new THREE.Vector3(), normal: new THREE.Vector3(0, 1, 0),
+  onGround: true, boosting: false, lastPos: new THREE.Vector3(), has: false,
+  forward(out) { return out.set(0, 0, 1).applyQuaternion(this.quat); },
+  speed() { return this.vel.length(); },
+};
+function updateReplayCar(p, dt) {
+  replayCar.quat.copy(p.quat);
+  if (replayCar.has && dt > 0) {
+    _rv.copy(p.pos).sub(replayCar.lastPos).divideScalar(dt);
+    if (_rv.lengthSq() < 2500) replayCar.vel.lerp(_rv, 0.2);
+  } else replayCar.vel.set(0, 0, 0);
+  replayCar.lastPos.copy(p.pos);
+  replayCar.has = true;
+  replayCar.onGround = p.pos.y < 0.7;
+  replayCar.boosting = p.boosting;
+}
 let replaySideX = 1;
 let attractTimer = 0;
 let attractFollow = null;
@@ -1174,9 +1194,10 @@ function updateCamera(dt) {
     replayGoalCam = false;
     if (idx >= 0 && !game.replayProxies.cars[idx].demolished) {
       const p = game.replayProxies.cars[idx];
+      updateReplayCar(p, dt);
       const saved = rig.ballCam;
       rig.ballCam = true;
-      rig.follow(game.goalScorer, p.pos, proxyBall.pos, dt);
+      rig.follow(replayCar, p.pos, proxyBall.pos, dt);
       rig.ballCam = saved;
     } else {
       _from.copy(proxyBall.pos).add(_target.set(0, 6, proxyBall.pos.z > 0 ? -14 : 14));

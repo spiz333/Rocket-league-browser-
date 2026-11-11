@@ -87,7 +87,7 @@ export function stepBall(b, dt, integrateRotation = true) {
   if (integrateRotation && b.quat && w > 1e-4) {
     _axis.copy(b.angVel).multiplyScalar(1 / w);
     _q.setFromAxisAngle(_axis, w * dt);
-    b.quat.premultiply(_q);
+    b.quat.premultiply(_q).normalize(); // without this rounding errors slowly stretch the ball
   }
   return impact;
 }

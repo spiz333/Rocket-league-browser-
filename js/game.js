@@ -713,26 +713,28 @@ export class Game {
     const tc = TEAM_COLORS[team];
     const p = pos.clone();
     const fx = this.fx;
+    const q = this.quality === 'low' ? 0.45 : this.quality === 'medium' ? 0.7 : 1;
+    const burst = (pp, n, ...rest) => fx.burst(pp, Math.max(4, Math.round(n * q)), ...rest);
     switch (ITEMS.goalfx[style]?.name) {
       case 'Fireworks': {
         const cols = [tc.glow, 0xffd23a, 0xff4fa8, 0x7dff6e, 0xffffff];
         for (let k = 0; k < 6; k++) {
           setTimeout(() => {
             const q = p.clone().add(_v.set((Math.random() - 0.5) * 10, 2 + Math.random() * 6, (Math.random() - 0.5) * 6));
-            fx.burst(q, 70, 14, cols[k % cols.length], { life: 1.3, size: 0.55, drag: 1.2, grav: 4, whiteMix: 0.3 });
+            burst(q, 70, 14, cols[k % cols.length], { life: 1.3, size: 0.55, drag: 1.2, grav: 4, whiteMix: 0.3 });
             this.audio.bounce(18, 0.6);
           }, k * 140);
         }
-        fx.burst(p, 60, 8, 0xffffff, { life: 0.8, size: 1.2, drag: 2.5, grow: 2 });
+        burst(p, 60, 8, 0xffffff, { life: 0.8, size: 1.2, drag: 2.5, grow: 2 });
         break;
       }
       case 'Shockwave':
         for (let k = 0; k < 4; k++) setTimeout(() => { fx.ring(p, UP, k % 2 ? 0xffffff : tc.glow, 22 + k * 6, 0.9); fx.ring(p, _v.set(0, 0, 1), tc.glow, 16 + k * 4, 0.8); }, k * 110);
-        fx.burst(p, 120, 30, tc.glow, { life: 0.9, size: 0.7, drag: 3, whiteMix: 0.5 });
+        burst(p, 120, 30, tc.glow, { life: 0.9, size: 0.7, drag: 3, whiteMix: 0.5 });
         break;
       case 'Confetti': {
         const cols = [0xff4f6d, 0xffd23a, 0x3ad7ff, 0x7dff6e, 0xb46bff, 0xffffff];
-        for (const c of cols) fx.burst(p, 45, 16, c, { life: 2.6, size: 0.35, drag: 1.4, grav: 2.5, up: true, alpha: 1 });
+        for (const c of cols) burst(p, 45, 16, c, { life: 2.6, size: 0.35, drag: 1.4, grav: 2.5, up: true, alpha: 1 });
         fx.ring(p, UP, tc.glow, 12, 0.7);
         break;
       }
@@ -744,26 +746,26 @@ export class Game {
             fx.spawn(p.x + Math.cos(a) * r + jitter, p.y + Math.sin(s2 * 1.7) * 1.2, p.z + Math.sin(a) * r + jitter, 0, 0, 0, 0.5 + s2 * 0.02, 0.8, 0.75, 0.9, 1.0, 1);
           }
         }
-        fx.burst(p, 160, 22, 0x9fd8ff, { life: 0.9, size: 0.6, drag: 2.5, whiteMix: 0.6 });
+        burst(p, 160, 22, 0x9fd8ff, { life: 0.9, size: 0.6, drag: 2.5, whiteMix: 0.6 });
         fx.ring(p, UP, 0xbfe8ff, 16, 0.5);
         break;
       case 'Supernova':
-        fx.burst(p, 90, -10, 0xffffff, { life: 0.45, size: 1.2, drag: 0, grow: -2 });
+        burst(p, 90, -10, 0xffffff, { life: 0.45, size: 1.2, drag: 0, grow: -2 });
         setTimeout(() => {
-          fx.burst(p, 260, 34, 0xffb02e, { life: 1.8, size: 1.1, drag: 1.4, whiteMix: 0.5, grow: 0.6 });
-          fx.burst(p, 120, 18, tc.glow, { life: 1.4, size: 1.4, drag: 2, grow: 1.5 });
+          burst(p, 260, 34, 0xffb02e, { life: 1.8, size: 1.1, drag: 1.4, whiteMix: 0.5, grow: 0.6 });
+          burst(p, 120, 18, tc.glow, { life: 1.4, size: 1.4, drag: 2, grow: 1.5 });
           fx.ring(p, UP, 0xffe08a, 26, 1.1);
           fx.ring(p, _v.set(0, 0, 1), 0xffffff, 20, 0.9);
-          this.rig.shake(1.4);
+          this.rig.shake(0.8);
         }, 380);
         break;
       default:
-        fx.burst(p, 220, 26, tc.glow, { life: 1.6, size: 1.0, drag: 1.6, whiteMix: 0.7, grow: 0.5 });
-        fx.burst(p, 80, 10, 0xffffff, { life: 1.0, size: 1.4, drag: 2.5, grow: 2 });
+        burst(p, 220, 26, tc.glow, { life: 1.6, size: 1.0, drag: 1.6, whiteMix: 0.7, grow: 0.5 });
+        burst(p, 80, 10, 0xffffff, { life: 1.0, size: 1.4, drag: 2.5, grow: 2 });
         fx.ring(p, _v.set(0, 0, 1), tc.glow, 18, 0.9);
         fx.ring(p, UP, 0xffffff, 12, 0.7);
     }
-    this.rig.shake(1.1);
+    this.rig.shake(0.6);
     if (this.arena.crowdMat) this.arena.crowdMat.uniforms.excite.value = 1.0;
   }
 

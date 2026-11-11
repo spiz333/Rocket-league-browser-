@@ -86,7 +86,7 @@ export class Car {
     this.surfaceContact = false;
     this.wheelSpin = 0;
     this.steerVis = 0;
-    this.unlimitedBoost = false;
+    // note: unlimitedBoost is a match setting and deliberately survives resets
     this.assist = this.assist ?? true;
     this.righting = 0;
     this.rightFrom = this.rightFrom || new THREE.Quaternion();
