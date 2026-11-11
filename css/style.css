@@ -803,3 +803,7 @@ table.binds td { padding: 3px 6px; border-top: 1px solid rgba(255,255,255,0.06);
 @keyframes bindPulse { from { opacity: 1; } to { opacity: 0.6; } }
 /* controller focus ring */
 body.pad-nav :focus { outline: 3px solid #59f3ff; outline-offset: 2px; box-shadow: 0 0 18px rgba(89,243,255,0.55); }
+
+/* overdrive: second boost ring above 100 */
+#boost-svg .od { fill: none; stroke: #ff9d2e; stroke-width: 3.5; stroke-linecap: round; filter: drop-shadow(0 0 4px rgba(255,140,40,0.95)); transition: stroke-dashoffset 0.15s linear; }
+#btn-boost.overdrive #boost-num { color: #ffb347; text-shadow: 0 0 10px rgba(255,140,40,0.9); }

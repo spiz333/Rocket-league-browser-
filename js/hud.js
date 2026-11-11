@@ -66,6 +66,18 @@ export class Hud {
       svg.appendChild(p);
       segs.push(p);
     }
+    // inner overdrive arc (boost above 100)
+    {
+      const r = 36.5, [ax, ay] = pt(r, start), [bx, by] = pt(r, start + sweep);
+      const od = document.createElementNS(NS, 'path');
+      od.setAttribute('d', `M${ax},${ay} A${r},${r} 0 1 1 ${bx},${by}`);
+      od.setAttribute('class', 'od');
+      od.setAttribute('pathLength', '100');
+      od.setAttribute('stroke-dasharray', '100 100');
+      od.setAttribute('stroke-dashoffset', '100');
+      svg.appendChild(od);
+      this.odArc = od;
+    }
     for (const a of [start, start + sweep]) {
       const [x0, y0] = pt(36, a), [x1, y1] = pt(52, a);
       const l = document.createElementNS(NS, 'line');
@@ -117,7 +129,13 @@ export class Hud {
     }
     this.lastBoost = b;
     this.boostNum.textContent = unlimited ? '∞' : b;
-    const lit = unlimited ? this.segs.length : Math.ceil((v / 100) * this.segs.length - 0.001);
+    const od = unlimited ? 0 : Math.max(0, Math.min(100, b - 100));
+    if (od !== this.lastOd) {
+      this.lastOd = od;
+      this.odArc.setAttribute('stroke-dashoffset', String(100 - od));
+      this.boostBtn.classList.toggle('overdrive', od > 0);
+    }
+    const lit = unlimited ? this.segs.length : Math.ceil((Math.min(100, v) / 100) * this.segs.length - 0.001);
     if (lit !== this.lastLit) {
       this.segs.forEach((s, i) => s.classList.toggle('on', i < lit));
       this.lastLit = lit;

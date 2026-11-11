@@ -2,7 +2,6 @@ import * as THREE from '../vendor/three.module.min.js';
 import { BALL, WORLD } from './config.js';
 import { sdf, sdfNormal } from './sdf.js';
 
-const R = BALL.R;
 const _n = new THREE.Vector3();
 const _vt = new THREE.Vector3();
 const _spin = new THREE.Vector3();
@@ -13,18 +12,18 @@ const _axis = new THREE.Vector3();
 
 export class Ball {
   constructor() {
-    this.pos = new THREE.Vector3(0, R, 0);
+    this.pos = new THREE.Vector3(0, BALL.R, 0);
     this.vel = new THREE.Vector3();
     this.angVel = new THREE.Vector3();
     this.quat = new THREE.Quaternion();
     this.hidden = false;
     this.touchedGround = false;
-    this.renderPos = new THREE.Vector3(0, R, 0);
+    this.renderPos = new THREE.Vector3(0, BALL.R, 0);
     this.renderQuat = new THREE.Quaternion();
   }
 
   reset() {
-    this.pos.set(0, R, 0);
+    this.pos.set(0, BALL.R, 0);
     this.vel.set(0, 0, 0);
     this.angVel.set(0, 0, 0);
     this.hidden = false;
@@ -55,6 +54,7 @@ export function stepBall(b, dt, integrateRotation = true) {
   b.pos.addScaledVector(b.vel, dt);
 
   let impact = 0;
+  const R = BALL.R;
   b.touchedGround = false;
   const d = sdf(b.pos.x, b.pos.y, b.pos.z);
   if (d < R) {
@@ -73,7 +73,7 @@ export function stepBall(b, dt, integrateRotation = true) {
         const f = Math.min(1, (BALL.SURFACE_FRICTION * impact * (1 + BALL.RESTITUTION)) / slipLen);
         _vt.addScaledVector(_slip, -f * 0.45);
       }
-      const e = impact < 1.2 ? 0 : BALL.RESTITUTION; // kill micro bounces so it can roll
+      const e = impact < 1.2 * Math.sqrt(WORLD.gravity / 6.5) ? 0 : BALL.RESTITUTION; // kill micro bounces so it can roll
       b.vel.copy(_vt).addScaledVector(_n, impact * e);
       // spin tends towards rolling without slipping
       _roll.crossVectors(_n, _vt).multiplyScalar(1 / R);

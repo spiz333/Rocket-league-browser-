@@ -1,6 +1,6 @@
 // Rule-based bots: rotation roles, intercepts, dodges and (on hard) aerials.
 import * as THREE from '../vendor/three.module.min.js';
-import { ARENA, BALL, CAR, WORLD, DIFFICULTY, BOOST_PADS, onArenaChange } from './config.js';
+import { BALL, CAR, WORLD, DIFFICULTY, BOOST_PADS, onArenaChange, botSkill } from './config.js';
 
 let L, W, GW;
 onArenaChange((A) => { ({ L, W, GW } = A); });
@@ -56,16 +56,19 @@ export class Bot {
     this.aerialTarget = new THREE.Vector3();
   }
 
+  // d: a skill number 0..1 (ranked tiers) or a legacy key
   setDifficulty(d) {
     this.diffKey = d;
-    this.diff = DIFFICULTY[d] || DIFFICULTY.normal;
+    this.diff = typeof d === 'number' ? botSkill(d) : (DIFFICULTY[d] || DIFFICULTY.normal);
+    // a personality trait: some low-ranked bots just chase the ball all game
+    this.chaser = Math.random() < this.diff.chase;
   }
 
   update(dt, game) {
     const car = this.car;
     const c = car.controls;
     c.throttle = 0; c.steer = 0; c.pitch = 0; c.yaw = 0; c.roll = 0;
-    c.jump = false; c.boost = false; c.drift = false; c.fwd = undefined;
+    c.jump = false; c.boost = false; c.drift = false; c.airRoll = false; c.fwd = undefined;
     if (car.demolished) { this.seq = null; return; }
 
     if (this.seq) {
@@ -83,11 +86,15 @@ export class Bot {
       this.decide(game, attackDir, ownGoalZ);
     }
 
-    // airborne without a sequence: land nicely
+    // airborne without a sequence: land nicely (if this bot knows how)
     if (!car.onGround) {
-      this.airRecover(c);
+      if (this.wasGround) this.canRecover = Math.random() < this.diff.recovery;
+      this.wasGround = false;
+      if (this.canRecover) this.airRecover(c);
+      else c.throttle = 1;
       return;
     }
+    this.wasGround = true;
 
     this.driveTo(this.target, c, game);
 
@@ -106,7 +113,7 @@ export class Bot {
   decide(game, attackDir, ownGoalZ) {
     const car = this.car;
     const ball = game.ball;
-    const role = car.role || 'attack';
+    const role = this.chaser ? 'attack' : (car.role || 'attack');
     this.mode = 'drive';
     this.wantBoost = false;
     this.arriveT = 0;
@@ -136,7 +143,7 @@ export class Bot {
 
     if (role === 'support') {
       // stay behind the play, pick up boost if low
-      if (this.car.boost < 35) {
+      if (this.car.boost < 35 && Math.random() < this.diff.padSmarts) {
         const pad = this.nearestBigPad(game, attackDir);
         if (pad) { this.target.set(pad.x, 0, pad.z); this.wantBoost = false; return; }
       }
@@ -172,7 +179,7 @@ export class Bot {
     const car = this.car;
     const pred = game.prediction;
     const canAerial = this.diff.aerial && car.boost > 30;
-    const reach = canAerial ? 9 : 2.0 + this.diff.jumpSkill * 2.2;
+    const reach = canAerial ? Math.max(4.5, this.diff.aerialHeight) : 2.0 + this.diff.jumpSkill * 2.2;
     const curSpeed = car.speed();
     const topSpeed = car.boost > 15 && this.diff.boost > 0.5 ? 20 : CAR.MAX_THROTTLE_SPEED * this.diff.speed;
     const fwd = car.forward(_v2);
@@ -258,7 +265,7 @@ export class Bot {
     this.arriveT = hit && hit.pos.y > 2.6 ? this.interceptT : 0;
 
     // hard bots: go for aerials
-    if (canAerial && hit && hit.pos.y > 4 && car.onGround && car.normal.y > 0.9) {
+    if (canAerial && hit && hit.pos.y > 4 && hit.pos.y < this.diff.aerialHeight && car.onGround && car.normal.y > 0.9) {
       const local = localOf(car, hit.pos, _v);
       const ang = Math.atan2(local.x, local.z);
       const hd = Math.hypot(hit.pos.x - car.pos.x, hit.pos.z - car.pos.z);
@@ -326,7 +333,7 @@ export class Bot {
     const closing = -(car.vel.x - ball.vel.x) * (-rel.x / (hd || 1)) - (car.vel.z - ball.vel.z) * (-rel.z / (hd || 1));
 
     if (this.mode === 'kickoff') {
-      if (hd < 6.5 && speed > 9 && Math.random() < this.diff.dodge + 0.25) {
+      if (hd < 6.5 && speed > 9 && Math.random() < this.diff.kickoffFlip) {
         this.seq = { type: 'dodge', t: 0, f: 1, s: clamp(-ang * 2, -0.4, 0.4) };
       }
       return;
@@ -342,7 +349,8 @@ export class Bot {
       this.seq = { type: 'dodge', t: 0, f: 1, s: clamp(-ang * 1.6, -0.6, 0.6) };
       return;
     }
-    // jump for bouncing balls
+    // jump for bouncing balls (lower ranks sometimes mistime it)
+    if (Math.random() < this.diff.whiff * 0.05) return;
     if (h > 2.3 && h < 2.3 + this.diff.jumpSkill * 3.0 && hd < 2.6 + speed * 0.12 && Math.abs(ang) < 0.6) {
       const timeToTop = h > 4.2 ? 0.45 : 0.3;
       if (tArrive < timeToTop + 0.15) {
@@ -356,8 +364,9 @@ export class Bot {
     const car = this.car;
     _qi.copy(car.quat).invert();
     const upL = _v.set(0, 1, 0).applyQuaternion(_qi); // world up in local frame
-    c.pitch = clamp(upL.z * 2.5, -1, 1);   // nose down if up vector points forward
-    c.roll = clamp(-upL.x * 2.5, -1, 1);
+    const wl = _v2.copy(car.angVel).applyQuaternion(_qi);   // spin in the car frame (damping)
+    c.pitch = clamp(upL.z * 3 - wl.x * 0.6, -1, 1);   // nose up/down towards level
+    c.roll = clamp(-upL.x * 3 - wl.z * 0.25, -1, 1);
     c.steer = 0; c.yaw = 0;
     c.throttle = 1;
   }
@@ -402,13 +411,14 @@ export class Bot {
       _qi.copy(car.quat).invert();
       const dl = _v.copy(_a).applyQuaternion(_qi);
       const wl = _v2.copy(car.angVel).applyQuaternion(_qi);
-      c.pitch = clamp(-Math.atan2(dl.y, dl.z) * 3.2 + wl.x * 0.35, -1, 1);
-      c.yaw = clamp(-Math.atan2(dl.x, dl.z) * 3.2 - wl.y * 0.35, -1, 1);
-      const leftY = _v2.set(1, 0, 0).applyQuaternion(car.quat).y;
-      c.roll = clamp(-leftY * 1.5, -1, 1);
+      // PD control on the nose direction (gains suit the torque-based air control)
+      c.pitch = clamp(-Math.atan2(dl.y, dl.z) * 4 - wl.x * 0.9, -1, 1);
+      c.yaw = clamp(-Math.atan2(dl.x, dl.z) * 4 + wl.y * 0.9, -1, 1);
+      const aligned = dl.z > 0.85;
+      const leftY = _v.set(1, 0, 0).applyQuaternion(car.quat).y;
+      c.roll = clamp(-leftY * 1.5 - wl.z * 0.25, -1, 1);
       c.steer = c.yaw;
       c.fwd = 0;
-      const aligned = dl.z > 0.85;
       c.boost = aligned && need > 2 && car.boost > 0;
       c.throttle = 1;
       if (s.t > this.aerialEnd + 0.4 || (car.onGround && s.t > 0.4) || car.pos.distanceTo(game.ball.pos) < 1.5) {

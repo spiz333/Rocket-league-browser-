@@ -24,7 +24,7 @@ export function onArenaChange(fn) { arenaListeners.push(fn); fn(ARENA); }
 
 export const GRAVITY = 6.5;
 // live physics values that arcade mutators may change for a match
-export const WORLD = { gravity: GRAVITY, unlimitedBoost: false };
+export const WORLD = { gravity: GRAVITY, unlimitedBoost: false, boostCap: 100, overdriveDecay: 6, noBoost: false, recharge: 0, demolish: 'normal', respawn: 3, maxScore: 0, trike: false, rules: null };
 export const PHYS_STEP = 1 / 120;
 
 export const BALL = {
@@ -42,6 +42,7 @@ export const CAR = {
   HZ: 0.62,
   OFFSET_Z: 0.06,    // hitbox is shifted slightly forward
   MASS: 180,
+  SCALE: 1,
   RIDE: 0.38,        // center height above the surface when driving
   MAX_THROTTLE_SPEED: 14.1,
   MAX_SPEED: 23,
@@ -140,35 +141,147 @@ export const BOT_NAMES = [
   'Vector', 'Widget', 'Comet', 'Bolt', 'Dynamo', 'Flux', 'Gizmo', 'Nimbus',
 ];
 
-export const DIFFICULTY = {
-  easy:   { label: 'Makkelijk', reaction: 0.35, speed: 0.82, boost: 0.35, dodge: 0.25, aerial: false, aimError: 0.35, jumpSkill: 0.4 },
-  normal: { label: 'Normaal',   reaction: 0.18, speed: 0.95, boost: 0.8,  dodge: 0.7,  aerial: false, aimError: 0.15, jumpSkill: 0.75 },
-  hard:   { label: 'Moeilijk',  reaction: 0.06, speed: 1.0,  boost: 1.0,  dodge: 1.0,  aerial: true,  aimError: 0.04, jumpSkill: 1.0 },
-};
+// ---------- competitive ranks ----------
+// 8 tiers x 3 divisions. Rating (MMR) thresholds: each tier spans 200, Bronze starts at 0.
+export const RANK_TIERS = [
+  { id: 'bronze', name: 'Bronze', color: '#c27a45', glow: '#ffb27a' },
+  { id: 'silver', name: 'Silver', color: '#a9b4c4', glow: '#e9f0fb' },
+  { id: 'gold', name: 'Gold', color: '#e3b23c', glow: '#ffe28a' },
+  { id: 'platinum', name: 'Platinum', color: '#3fc6c2', glow: '#9ffff6' },
+  { id: 'diamond', name: 'Diamond', color: '#4f86ff', glow: '#a9c6ff' },
+  { id: 'champion', name: 'Champion', color: '#a45cff', glow: '#d9b8ff' },
+  { id: 'grand', name: 'Grand Champion', color: '#ff4f6a', glow: '#ffb0bd' },
+  { id: 'mythic', name: 'Mythic', color: '#f5f2ff', glow: '#8ff7ff' },
+];
+export const MMR_PER_TIER = 200;
+export const START_MMR = 230;
+export function rankOf(mmr) {
+  const m = Math.max(0, mmr);
+  const tier = Math.min(RANK_TIERS.length - 1, Math.floor(m / MMR_PER_TIER));
+  const top = tier === RANK_TIERS.length - 1;
+  const into = m - tier * MMR_PER_TIER;
+  const div = top ? 0 : Math.min(2, Math.floor(into / (MMR_PER_TIER / 3)));
+  const divStart = tier * MMR_PER_TIER + div * (MMR_PER_TIER / 3);
+  const divSize = top ? 1 : MMR_PER_TIER / 3;
+  return {
+    tier, div, ...RANK_TIERS[tier],
+    label: top ? RANK_TIERS[tier].name : `${RANK_TIERS[tier].name} ${['I', 'II', 'III'][div]}`,
+    progress: top ? 1 : Math.max(0, Math.min(1, (m - divStart) / divSize)),
+  };
+}
+// skill 0..1 from a rating (continuous, so bots get a little better with every division)
+export function skillOfMmr(mmr) { return Math.max(0, Math.min(1, mmr / (MMR_PER_TIER * (RANK_TIERS.length - 1) + 60))); }
 
-// ---------- arcade mutators ----------
+// Bot ability for a skill level 0 (new driver) .. 1 (top tier).
+export function botSkill(sk) {
+  const s = Math.max(0, Math.min(1, sk));
+  const L = (a, b, p = 1) => a + (b - a) * Math.pow(s, p);
+  return {
+    skill: s,
+    reaction: L(0.45, 0.035),          // seconds between decisions
+    speed: L(0.74, 1.0, 0.7),          // throttle speed without boost
+    boost: L(0.2, 1.0, 0.8),           // how eagerly they boost
+    dodge: L(0.05, 1.0),               // flips into the ball / on kickoff
+    aerial: s >= 0.4,                  // platinum and up go for aerials
+    aerialHeight: s < 0.4 ? 0 : L(-6, 17, 1),    // highest ball they will aerial for
+    aimError: L(0.55, 0.025),          // radians of shot error
+    jumpSkill: L(0.25, 1.0),
+    chase: L(0.85, 0.0, 0.6),          // chance a bot ignores rotation and ball-chases
+    padSmarts: L(0.1, 1.0),            // picks up boost when low
+    recovery: L(0.35, 1.0, 0.6),       // air control to land on wheels
+    kickoffFlip: L(0.0, 1.0, 1.2),
+    whiff: L(0.3, 0.0, 0.8),           // random mistimed touches
+  };
+}
+// legacy difficulty keys (old settings / attract mode) mapped onto skills
+export const DIFFICULTY = {
+  easy: botSkill(0.08), normal: botSkill(0.38), hard: botSkill(0.8),
+};
+export const BOT_TIERS = RANK_TIERS.map((t, i) => ({ id: t.id, name: t.name, skill: (i * MMR_PER_TIER + 100) / (MMR_PER_TIER * (RANK_TIERS.length - 1) + 60) }));
+export function botTierSkill(id) {
+  if (DIFFICULTY[id]) return DIFFICULTY[id].skill;
+  const t = BOT_TIERS.find(b => b.id === id);
+  return t ? Math.min(1, t.skill) : 0.38;
+}
+
+// ---------- match rules (custom matches, arcade presets, online lobbies) ----------
+// Every option: [value, label, factor]
+export const RULE_DEFS = [
+  { id: 'arena', name: 'Arena size', def: 'standard', opts: [['small', 'Small'], ['standard', 'Standard'], ['large', 'Large'], ['huge', 'Huge']] },
+  { id: 'ballSize', name: 'Ball size', def: 'normal', opts: [['small', 'Small', 0.72], ['normal', 'Default', 1], ['large', 'Large', 1.5], ['huge', 'Huge', 2.2]] },
+  { id: 'ballType', name: 'Ball physics', def: 'normal', opts: [['normal', 'Default'], ['light', 'Light'], ['heavy', 'Heavy'], ['bouncy', 'Super bouncy'], ['sticky', 'Dead ball']] },
+  { id: 'ballSpeed', name: 'Max ball speed', def: 'normal', opts: [['slow', 'Slow', 0.7], ['normal', 'Default', 1], ['fast', 'Fast', 1.35], ['super', 'Super fast', 1.8]] },
+  { id: 'gravity', name: 'Gravity', def: 'normal', opts: [['low', 'Low', 0.42], ['normal', 'Default', 1], ['high', 'High', 1.6], ['super', 'Super high', 2.4]] },
+  { id: 'carSize', name: 'Car size', def: 'normal', opts: [['small', 'Small', 0.75], ['normal', 'Default', 1], ['large', 'Large', 1.35], ['huge', 'Huge', 1.75]] },
+  { id: 'carSpeed', name: 'Car speed', def: 'normal', opts: [['slow', 'Slow', 0.8], ['normal', 'Default', 1], ['fast', 'Fast', 1.25], ['super', 'Super fast', 1.5]] },
+  { id: 'boost', name: 'Boost', def: 'normal', opts: [['normal', 'Default'], ['unlimited', 'Unlimited'], ['overdrive', 'Overdrive (200)'], ['recharge', 'Recharging'], ['none', 'No boost']] },
+  { id: 'boostPower', name: 'Boost strength', def: 'normal', opts: [['normal', '1x', 1], ['x15', '1.5x', 1.5], ['x2', '2x', 2], ['x3', '3x', 3]] },
+  { id: 'demolish', name: 'Demolitions', def: 'normal', opts: [['normal', 'Default'], ['off', 'Off'], ['contact', 'On any contact']] },
+  { id: 'respawn', name: 'Respawn time', def: '3', opts: [['3', '3 s', 3], ['2', '2 s', 2], ['1', '1 s', 1], ['0', 'Instant', 0.05]] },
+  { id: 'vehicle', name: 'Vehicle', def: 'normal', opts: [['normal', 'Four wheels'], ['trike', 'Wobbly trike']] },
+  { id: 'maxScore', name: 'Max score', def: '0', opts: [['0', 'Unlimited'], ['1', '1 goal'], ['3', '3 goals'], ['5', '5 goals'], ['7', '7 goals']] },
+];
+export const DEFAULT_RULES = Object.fromEntries(RULE_DEFS.map(r => [r.id, r.def]));
+export function cleanRules(r) {
+  const out = { ...DEFAULT_RULES };
+  if (r && typeof r === 'object') for (const d of RULE_DEFS) if (d.opts.some(o => o[0] === r[d.id])) out[d.id] = r[d.id];
+  return out;
+}
+function factor(id, v) { const d = RULE_DEFS.find(r => r.id === id); const o = d && d.opts.find(x => x[0] === v); return o && o[2] != null ? o[2] : 1; }
+
+// quick-match arcade presets
 export const MUTATORS = [
-  { id: 'none', name: 'Standard', desc: 'Classic rules' },
-  { id: 'lowgrav', name: 'Low Gravity', desc: 'Floaty cars and a floaty ball' },
-  { id: 'bouncy', name: 'Bouncy Ball', desc: 'The ball barely loses speed off walls' },
-  { id: 'speed', name: 'Speed Demon', desc: 'Faster cars and stronger boost' },
-  { id: 'unlimited', name: 'Unlimited Boost', desc: 'Boost never runs out' },
+  { id: 'none', name: 'Standard', desc: 'Classic rules', rules: {} },
+  { id: 'lowgrav', name: 'Low Gravity', desc: 'Floaty cars and a floaty ball', rules: { gravity: 'low' } },
+  { id: 'bouncy', name: 'Bouncy Ball', desc: 'The ball barely loses speed off walls', rules: { ballType: 'bouncy' } },
+  { id: 'speed', name: 'Speed Demon', desc: 'Faster cars and stronger boost', rules: { carSpeed: 'fast', boostPower: 'x15', ballSpeed: 'fast' } },
+  { id: 'unlimited', name: 'Unlimited Boost', desc: 'Boost never runs out', rules: { boost: 'unlimited' } },
+  { id: 'overdrive', name: 'Overdrive', desc: '200 boost tank — anything over 100 slowly drains back', rules: { boost: 'overdrive' } },
+  { id: 'giant', name: 'Giant Ball', desc: 'A huge, heavy ball', rules: { ballSize: 'huge', ballType: 'heavy' } },
+  { id: 'trike', name: 'Wobbly Trikes', desc: 'Three wheels — corner too hard and you tip over', rules: { vehicle: 'trike' } },
 ];
 const BASE = { ball: { ...BALL }, car: { ...CAR } };
-export function applyMutator(id) {
+const rulesListeners = [];
+export function onRulesChange(fn) { rulesListeners.push(fn); }
+export function applyRules(r) {
+  r = cleanRules(r);
   Object.assign(BALL, BASE.ball);
   Object.assign(CAR, BASE.car);
-  WORLD.gravity = GRAVITY;
-  WORLD.unlimitedBoost = false;
-  switch (id) {
-    case 'lowgrav': WORLD.gravity = GRAVITY * 0.42; break;
-    case 'bouncy': BALL.RESTITUTION = 0.92; BALL.DRAG = 0.01; BALL.SURFACE_FRICTION = 0.08; break;
-    case 'speed':
-      CAR.MAX_SPEED = BASE.car.MAX_SPEED * 1.25; CAR.MAX_THROTTLE_SPEED = BASE.car.MAX_THROTTLE_SPEED * 1.25;
-      CAR.THROTTLE_ACCEL = BASE.car.THROTTLE_ACCEL * 1.3; CAR.BOOST_ACCEL = BASE.car.BOOST_ACCEL * 1.35;
-      CAR.SUPERSONIC = BASE.car.SUPERSONIC * 1.25; BALL.MAX_SPEED = BASE.ball.MAX_SPEED * 1.2;
-      break;
-    case 'unlimited': WORLD.unlimitedBoost = true; break;
-    default: break;
-  }
+  WORLD.rules = r;
+  WORLD.gravity = GRAVITY * factor('gravity', r.gravity);
+  WORLD.unlimitedBoost = r.boost === 'unlimited';
+  WORLD.boostCap = r.boost === 'overdrive' ? 200 : 100;
+  WORLD.noBoost = r.boost === 'none';
+  WORLD.recharge = r.boost === 'recharge' ? 9 : 0;
+  WORLD.demolish = r.demolish;
+  WORLD.respawn = factor('respawn', r.respawn);
+  WORLD.maxScore = +r.maxScore || 0;
+  WORLD.trike = r.vehicle === 'trike';
+  // ball
+  const bs = factor('ballSize', r.ballSize);
+  BALL.R = BASE.ball.R * bs;
+  BALL.MASS = BASE.ball.MASS * Math.pow(bs, 1.5);
+  BALL.MAX_SPEED = BASE.ball.MAX_SPEED * factor('ballSpeed', r.ballSpeed);
+  if (r.ballType === 'light') { BALL.MASS *= 0.55; BALL.DRAG = 0.06; }
+  if (r.ballType === 'heavy') { BALL.MASS *= 2.2; BALL.RESTITUTION = 0.45; }
+  if (r.ballType === 'bouncy') { BALL.RESTITUTION = 0.92; BALL.DRAG = 0.01; BALL.SURFACE_FRICTION = 0.08; }
+  if (r.ballType === 'sticky') { BALL.RESTITUTION = 0.15; BALL.SURFACE_FRICTION = 0.6; }
+  // cars
+  const cs = factor('carSize', r.carSize);
+  CAR.SCALE = cs;
+  CAR.HX = BASE.car.HX * cs; CAR.HY = BASE.car.HY * cs; CAR.HZ = BASE.car.HZ * cs;
+  CAR.OFFSET_Z = BASE.car.OFFSET_Z * cs; CAR.RIDE = BASE.car.RIDE * cs;
+  CAR.MASS = BASE.car.MASS * Math.pow(cs, 2);
+  const sp = factor('carSpeed', r.carSpeed);
+  CAR.MAX_SPEED = BASE.car.MAX_SPEED * sp; CAR.MAX_THROTTLE_SPEED = BASE.car.MAX_THROTTLE_SPEED * sp;
+  CAR.THROTTLE_ACCEL = BASE.car.THROTTLE_ACCEL * sp; CAR.SUPERSONIC = BASE.car.SUPERSONIC * sp;
+  CAR.BOOST_ACCEL = BASE.car.BOOST_ACCEL * sp * factor('boostPower', r.boostPower);
+  // stronger gravity needs a stronger jump to stay playable
+  const g = factor('gravity', r.gravity);
+  if (g > 1) { const k = Math.sqrt(g); CAR.JUMP_IMPULSE *= k; CAR.JUMP_HOLD_ACCEL *= k; CAR.DOUBLE_JUMP_IMPULSE *= k; CAR.STICKY *= g; }
+  setArenaSize(r.arena);
+  rulesListeners.forEach(fn => fn(r));
+  return r;
 }
+export function mutatorRules(id) { const m = MUTATORS.find(x => x.id === id); return cleanRules(m ? m.rules : {}); }
+export function applyMutator(id) { return applyRules(mutatorRules(id)); }

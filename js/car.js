@@ -1,5 +1,5 @@
 import * as THREE from '../vendor/three.module.min.js';
-import { CAR, WORLD } from './config.js';
+import { CAR, WORLD, onRulesChange } from './config.js';
 import { sdf, sdfNormal } from './sdf.js';
 
 const _fwd = new THREE.Vector3();
@@ -34,9 +34,14 @@ function curvature(s) {
 }
 
 const CORNERS = [];
-for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
-  CORNERS.push(new THREE.Vector3(sx * CAR.HX, sy * CAR.HY, sz * CAR.HZ + CAR.OFFSET_Z));
+function buildCorners() {
+  CORNERS.length = 0;
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
+    CORNERS.push(new THREE.Vector3(sx * CAR.HX, sy * CAR.HY, sz * CAR.HZ + CAR.OFFSET_Z));
+  }
 }
+buildCorners();
+onRulesChange(buildCorners); // car size option
 
 export function emptyControls() {
   return { throttle: 0, steer: 0, pitch: 0, yaw: 0, roll: 0, jump: false, boost: false, drift: false, airRoll: false };
@@ -130,8 +135,12 @@ export class Car {
     this.prevJump = c.jump;
     if (this.squash > 0) this.squash = Math.max(0, this.squash - dt * 4);
 
-    this.boosting = c.boost && (this.boost > 0 || this.unlimitedBoost);
+    this.boosting = !WORLD.noBoost && c.boost && (this.boost > 0 || this.unlimitedBoost);
     if (this.boosting && !this.unlimitedBoost) this.boost = Math.max(0, this.boost - CAR.BOOST_USE * dt);
+    // overdrive: anything above the normal 100 slowly drains back down
+    if (this.boost > 100) this.boost = Math.max(100, this.boost - WORLD.overdriveDecay * dt);
+    // recharging boost rule
+    if (WORLD.recharge && !this.boosting && this.boost < 100) this.boost = Math.min(100, this.boost + WORLD.recharge * dt);
 
     if (this.groundLock > 0) this.groundLock -= dt;
 
@@ -205,6 +214,22 @@ export class Car {
       _q.setFromAxisAngle(n, yawRate * dt);
       this.quat.premultiply(_q).normalize();
       this.angVel.copy(n).multiplyScalar(yawRate);
+
+      // wobbly trike: corner too hard (or land crooked) and it rolls over
+      if (WORLD.trike && this.dodging <= 0) {
+        const latAcc = Math.abs(yawRate * spd);
+        this.tip = (this.tip || 0) + (latAcc > 13 ? (latAcc - 13) * dt * 0.55 : -dt * 2);
+        this.tip = Math.max(0, this.tip);
+        if (this.tip > 0.35 && Math.random() < 0.05) {
+          this.tip = 0;
+          const side = Math.sign(yawRate * spd) || 1;
+          this.onGround = false; this.groundLock = 0.25; this.jumped = true; this.sinceJump = 0.3;
+          this.vel.addScaledVector(n, 2.2);
+          this.forward(_v);
+          this.angVel.copy(_v).multiplyScalar(side * 7.5);
+          if (this.events && this.events.thud) this.events.thud(this, 4);
+        }
+      }
 
       // lateral grip
       const lat = this.vel.dot(_lt);

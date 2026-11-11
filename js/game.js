@@ -1,6 +1,6 @@
 // Match orchestration: physics stepping, rules, scoring, effects and views.
 import * as THREE from '../vendor/three.module.min.js';
-import { ARENA, BALL, CAR, BOOST_PADS, KICKOFF_SPOTS, KICKOFF_SETS, BOT_NAMES, TEAM_COLORS, PHYS_STEP, WORLD, applyMutator } from './config.js';
+import { BALL, CAR, BOOST_PADS, KICKOFF_SPOTS, KICKOFF_SETS, BOT_NAMES, TEAM_COLORS, PHYS_STEP, WORLD, applyRules, mutatorRules, botTierSkill, DEFAULT_RULES } from './config.js';
 import { Ball, stepBall, BallPredictor } from './ball.js';
 import { Car, emptyControls } from './car.js';
 import { Bot, assignRoles } from './ai.js';
@@ -122,7 +122,10 @@ export class Game {
     this.ownOffset.set(0, 0, 0);
     this.recorder.clear();
     const o = this.opts;
-    applyMutator(o.mode === 'attract' ? 'none' : (o.mutator || 'none'));
+    // match rules: custom rules > arcade preset > standard
+    o.rules = applyRules(o.mode === 'attract' || o.kind === 'ranked' ? DEFAULT_RULES : (o.rules || mutatorRules(o.mutator || 'none')));
+    const baseSkill = typeof o.botSkill === 'number' ? o.botSkill : botTierSkill(o.difficulty);
+    this.ballView.group.scale.setScalar(BALL.R);
     this.role = o.role || 'local';
     const roster = o.roster || Game.defaultRoster(o);
     const localOwner = o.localOwner || 'local';
@@ -137,9 +140,19 @@ export class Game {
         car.events = this.carEvents();
         this.cars.push(car);
         if (isPlayer) this.player = car;
-        else if (car.owner == null && this.role !== 'client') this.bots.push(new Bot(car, o.difficulty));
+        else if (car.owner == null && this.role !== 'client') this.bots.push(new Bot(car, typeof entry.skill === 'number' ? entry.skill : baseSkill));
         else if (car.owner != null && this.role === 'host') this.remote.set(car.owner, { car, input: emptyControls(), ack: 0, pressSeen: false });
+        car.skill = typeof entry.skill === 'number' ? entry.skill : baseSkill;
+        car.mmr = entry.mmr;
         const view = buildCarMesh(team, car.look, this.quality);
+        view.root.scale.setScalar(CAR.SCALE);
+        if (WORLD.trike) {
+          // three wheels: one centred front wheel
+          for (const w of view.wheels) {
+            if (!w.front) continue;
+            if (w.pivot.position.x < 0) w.pivot.visible = false; else w.pivot.position.x = 0;
+          }
+        }
         this.scene.add(view.root);
         if (!this.shadows) {
           view.blob = buildShadowMesh(2.0);
@@ -235,7 +248,7 @@ export class Game {
         const sgn = team === 0 ? 1 : -1;
         const x = spot.x * sgn, z = spot.z * sgn;
         const yaw = Math.atan2(-x, -z);
-        const boost = car.unlimitedBoost ? 100 : 33;
+        const boost = car.unlimitedBoost ? 100 : WORLD.noBoost ? 0 : 33;
         car.place(x, z, yaw);
         car.boost = boost;
         car.controls.jump = false;
@@ -515,7 +528,7 @@ export class Game {
         if (b.demolished) continue;
         _v.copy(b.pos).sub(a.pos);
         const d = _v.length();
-        const minD = 1.2;
+        const minD = 1.2 * CAR.SCALE;
         if (d >= minD || d < 1e-5) continue;
         _n.copy(_v).multiplyScalar(1 / d);
         const push = (minD - d) / 2;
@@ -543,16 +556,21 @@ export class Game {
   }
 
   tryDemo(atk, vic, dirToVic) {
-    if (atk.team === vic.team || !atk.supersonic) return false;
-    const f = atk.forward(_w);
-    if (f.dot(dirToVic) < 0.6) return false;
+    if (atk.team === vic.team || WORLD.demolish === 'off') return false;
+    if (WORLD.demolish === 'contact') {
+      if (atk.vel.dot(dirToVic) < 4) return false;
+    } else {
+      if (!atk.supersonic) return false;
+      const f = atk.forward(_w);
+      if (f.dot(dirToVic) < 0.6) return false;
+    }
     this.demolish(vic, atk);
     return true;
   }
 
   demolish(vic, atk) {
     vic.demolished = true;
-    vic.respawnTimer = 3;
+    vic.respawnTimer = WORLD.respawn;
     vic.vel.set(0, 0, 0);
     if (atk) {
       atk.stats.demos++;
@@ -566,7 +584,7 @@ export class Game {
     const spot = KICKOFF_SPOTS[(Math.random() * KICKOFF_SPOTS.length) | 0];
     const x = spot.x * sgn * 1.2, z = (spot.z - 4) * sgn;
     car.place(x, z, Math.atan2(-x * 0.2, -z));
-    car.boost = car.unlimitedBoost ? 100 : 33;
+    car.boost = car.unlimitedBoost ? 100 : WORLD.noBoost ? 0 : 33;
     car.prevJump = true;
   }
 
@@ -577,10 +595,10 @@ export class Game {
       const pd = BOOST_PADS[i];
       const r = pd.big ? 2.0 : 1.3;
       for (const car of this.cars) {
-        if (car.demolished || car.boost >= 100 || car.pos.y > 2.6) continue;
+        if (car.demolished || car.boost >= WORLD.boostCap || car.pos.y > 2.6 || WORLD.noBoost) continue;
         const dx = car.pos.x - pd.x, dz = car.pos.z - pd.z;
         if (dx * dx + dz * dz < r * r) {
-          car.boost = Math.min(100, car.boost + (pd.big ? 100 : 12));
+          car.boost = Math.min(WORLD.boostCap, car.boost + (pd.big ? 100 : 12));
           p.active = false;
           p.timer = pd.big ? 10 : 4;
           this.emitFx({ k: 'pad', i, c: this.cars.indexOf(car) });
@@ -692,6 +710,7 @@ export class Game {
     this.goalTimer = 0;
     this.setState('goal');
     if (this.overtime) this.matchOver = true;
+    if (WORLD.maxScore && this.score[scoringTeam] >= WORLD.maxScore && this.opts.mode !== 'training') this.matchOver = true;
   }
 
   goalShock(pos) {
@@ -802,6 +821,7 @@ export class Game {
   }
 
   tickClock(dt) {
+    if (!this.opts.duration) { this.timeLeft += dt; return; } // unlimited time: count up
     if (this.overtime) {
       this.timeLeft += dt;
     } else if (!this.timeUp) {
@@ -1122,7 +1142,7 @@ export class Game {
     this.ballView.mesh.quaternion.copy(bQuat);
     this.ballShadow.visible = !b.hidden && bPos.y < 30;
     this.ballShadow.position.set(bPos.x, 0.03, bPos.z);
-    const ss = 1 + bPos.y * 0.05;
+    const ss = (1 + bPos.y * 0.05) * BALL.R;
     this.ballShadow.scale.set(ss, ss, ss);
     this.ballShadow.material.opacity = Math.max(0.15, 1 - bPos.y / 22) * (this.shadows ? 0.35 : 1);
     const sinceHit = this.time - (this.ball.lastHit ?? -10);
